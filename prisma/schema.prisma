@@ -135,6 +135,7 @@ model Organization {
   invoices           Invoice[]
   payments           Payment[]
   expenses           Expense[]
+  notifications      Notification[]
 
   @@map("organizations")
 }
@@ -198,6 +199,7 @@ model Membership {
   assignedCustomers Customer[]
   assignedTasks     Task[]
   assignedOrders    Order[]
+  notifications     Notification[]
 
   @@unique([userId, organizationId])
   @@index([organizationId])
@@ -942,6 +944,33 @@ model Expense {
   @@index([organizationId, incurredAt])
   @@index([branchId, incurredAt])
   @@map("expenses")
+}
+
+enum NotificationType {
+  TASK_ASSIGNED
+  CUSTOMER_ASSIGNED
+}
+
+// In-app only — no email/push delivery exists yet (brief §45: don't fake a
+// channel that isn't real). A row here is a real, persisted fact the
+// recipient can see in the bell dropdown; it just doesn't leave the app.
+model Notification {
+  id             String           @id @default(cuid())
+  organizationId String
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  membershipId   String
+  membership     Membership       @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  type           NotificationType
+  message        String
+  // Where clicking the notification should take the recipient, e.g.
+  // "/customers/abc123". Nullable since not every notification type will
+  // necessarily have one.
+  linkPath       String?
+  readAt         DateTime?        @db.Timestamptz(3)
+  createdAt      DateTime         @default(now()) @db.Timestamptz(3)
+
+  @@index([membershipId, readAt, createdAt])
+  @@map("notifications")
 }
 
 model AuditLog {

@@ -5,6 +5,7 @@ import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext, requirePermission, ForbiddenError } from "@/lib/rbac/guard";
 import { createCustomerSchema } from "@/lib/validation/customer";
 import { logActivity } from "./activity";
+import { notifyMembership } from "@/lib/notifications/notify";
 import type { ActionResult } from "@/lib/auth/actions";
 
 export async function createCustomerAction(
@@ -105,6 +106,17 @@ export async function assignCustomerAction(
       actorUserId: user.id,
       metadata: { assignedToId },
     });
+
+    if (assignedToId) {
+      await notifyMembership(tx, {
+        organizationId: ctx.organizationId,
+        membershipId: assignedToId,
+        actingMembershipId: ctx.membershipId,
+        type: "CUSTOMER_ASSIGNED",
+        message: `${loaded.customer.name} was assigned to you`,
+        linkPath: `/customers/${customerId}`,
+      });
+    }
   });
 
   return { ok: true, data: undefined };

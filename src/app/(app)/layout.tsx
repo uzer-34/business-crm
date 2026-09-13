@@ -1,11 +1,14 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { db } from "@/lib/db";
 import { getDefaultMembershipOrRedirect } from "@/lib/organization/actions";
 import { logoutAction } from "@/lib/auth/actions";
+import { NotificationBell } from "./notification-bell";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/customers", label: "Customers" },
+  { href: "/tasks", label: "Tasks" },
   { href: "/orders", label: "Orders" },
   { href: "/invoices", label: "Invoices" },
   { href: "/expenses", label: "Expenses" },
@@ -14,11 +17,25 @@ const NAV_ITEMS = [
   { href: "/inventory", label: "Inventory" },
   { href: "/suppliers", label: "Suppliers" },
   { href: "/purchase-orders", label: "Purchase Orders" },
+  { href: "/employees", label: "Employees" },
   { href: "/branches", label: "Branches" },
 ];
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const { user, membership } = await getDefaultMembershipOrRedirect();
+
+  const notificationRows = await db.notification.findMany({
+    where: { membershipId: membership.id },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+  });
+  const notifications = notificationRows.map((n) => ({
+    id: n.id,
+    message: n.message,
+    linkPath: n.linkPath,
+    readAt: n.readAt?.toISOString() ?? null,
+    createdAt: n.createdAt.toISOString(),
+  }));
 
   return (
     <div className="flex min-h-screen">
@@ -54,12 +71,18 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       <div className="flex min-h-screen flex-1 flex-col">
         <header className="flex items-center justify-between border-b border-border bg-card px-6 py-3 sm:hidden">
           <p className="text-sm font-semibold">{membership.organization.name}</p>
-          <form action={logoutAction}>
-            <button type="submit" className="text-sm text-muted-foreground">
-              Sign out
-            </button>
-          </form>
+          <div className="flex items-center gap-2">
+            <NotificationBell membershipId={membership.id} notifications={notifications} />
+            <form action={logoutAction}>
+              <button type="submit" className="text-sm text-muted-foreground">
+                Sign out
+              </button>
+            </form>
+          </div>
         </header>
+        <div className="hidden justify-end border-b border-border bg-card px-6 py-2 sm:flex">
+          <NotificationBell membershipId={membership.id} notifications={notifications} />
+        </div>
         <main className="flex-1 bg-background px-6 py-8">{children}</main>
       </div>
     </div>

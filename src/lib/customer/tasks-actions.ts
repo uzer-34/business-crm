@@ -5,6 +5,7 @@ import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext, requirePermission, ForbiddenError } from "@/lib/rbac/guard";
 import { createTaskSchema } from "@/lib/validation/customer";
 import { logActivity } from "./activity";
+import { notifyMembership } from "@/lib/notifications/notify";
 import type { ActionResult } from "@/lib/auth/actions";
 
 export async function createTaskAction(customerId: string, input: unknown): Promise<ActionResult> {
@@ -56,6 +57,17 @@ export async function createTaskAction(customerId: string, input: unknown): Prom
       actorUserId: user.id,
       metadata: { title: parsed.data.title },
     });
+
+    if (parsed.data.assignedToId) {
+      await notifyMembership(tx, {
+        organizationId: ctx.organizationId,
+        membershipId: parsed.data.assignedToId,
+        actingMembershipId: ctx.membershipId,
+        type: "TASK_ASSIGNED",
+        message: `New task: ${parsed.data.title}`,
+        linkPath: `/customers/${customerId}`,
+      });
+    }
   });
 
   return { ok: true, data: undefined };
@@ -71,11 +83,14 @@ export async function completeTaskAction(taskId: string): Promise<ActionResult> 
   const ctx = await loadTenantContext(user.id, task.organizationId);
   if (!ctx) return { ok: false, error: "Task not found" };
 
-  try {
-    requirePermission(ctx, "customers.edit");
-  } catch (error) {
-    if (error instanceof ForbiddenError) return { ok: false, error: error.message };
-    throw error;
+  // Completing your own assigned task is always allowed; completing one
+  // assigned to someone else needs the module permission that applies
+  // (customers.edit for a customer-linked task, tasks.edit otherwise).
+  const canComplete =
+    task.assignedToId === ctx.membershipId ||
+    ctx.permissions.has(task.customerId ? "customers.edit" : "tasks.edit");
+  if (!canComplete) {
+    return { ok: false, error: "Missing permission to complete this task" };
   }
 
   await db.$transaction(async (tx) => {

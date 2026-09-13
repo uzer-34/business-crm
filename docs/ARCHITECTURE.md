@@ -445,6 +445,88 @@ Money going out, and the first cross-module report (brief §25):
   secondary sort key, so same-day expenses now stay ordered
   most-recently-entered-first.
 
+## Employees, Tasks & Notifications (Phase 9)
+
+This phase closes the biggest standing gap in the project — there was no
+way to add a second person to an organization — and gives the Task model
+(built in Phase 2, customer-scoped only) a general, org-wide home.
+
+- **No separate invite-link/email system was built.** An "invite" is
+  administrative only: `inviteEmployeeAction` upserts a `User` row by
+  email/phone and creates a `Membership` with `status: INVITED` pointing
+  at it. There is nothing to click — the invited person just goes to the
+  ordinary `/login` page and requests an OTP the normal way. The hook that
+  makes this work lives in `verifyOtpAction` (Phase 1's login action):
+  right after resolving the `User`, it flips any of that user's `INVITED`
+  memberships to `ACTIVE` (`joinedAt: now`) before the session is created.
+  This matches brief §45/§41 — no fake email-delivery system, no
+  unclickable "invite link" — and was the only design that made sense once
+  passwordless OTP is *already* the entire signup mechanism: a second
+  invite flow would have been a parallel, redundant path into the same
+  User/Session tables.
+- **Privilege-escalation guard**: `employees.manage` (held by both Manager
+  and Owner) would otherwise let a Manager invite — or promote — someone
+  into the *Owner* role, handing them more power than the Manager granting
+  it. `requireOwnerToGrantOwner()` blocks assigning the `owner` role key
+  unless the caller's own role is already Owner. The Employees page's UI
+  also hides "Owner" from the role dropdown for non-Owners, but the real
+  boundary is server-side — verified by reading both call sites
+  (`inviteEmployeeAction`, `changeEmployeeRoleAction`), the same "UI hides
+  it, server also enforces it" discipline used for `invoices.void` /
+  `expenses.void` elsewhere.
+- **Suspend, not delete** — `suspendEmployeeAction`/`reactivateEmployeeAction`
+  toggle `Membership.status` between `ACTIVE`/`SUSPENDED`; a suspended
+  membership simply stops being found by `loadTenantContext` (which only
+  matches `status: "ACTIVE"`) and by `getDefaultMembershipOrRedirect`. A
+  suspended person can still log in (their `User`/`Session` are untouched)
+  but lands on `/onboarding` — the same code path a brand-new user takes,
+  since "no active membership anywhere" looks identical either way. You
+  cannot suspend yourself (checked against `ctx.membershipId`).
+- **This is the project's first real, live, cross-role browser test.**
+  Every previous phase's manager-vs-employee permission claims (Phase 7's
+  `invoices.void`, Phase 8's `expenses.void`/`reports.financial`) had been
+  verified only by reading the permission catalog, because there was no
+  way to actually create a second logged-in user in the same org. Phase 9
+  finally did this for real: invited an Employee-role membership scoped to
+  one specific branch (not `allBranches`), logged in as that person, and
+  confirmed in a live browser that (a) their first login activates the
+  membership and lands on the dashboard rather than onboarding, (b) the
+  Inventory page's branch switcher shows only the one branch they were
+  scoped to and never the org's other branch, and (c) `/employees` shows a
+  permission-denied message rather than the page (Employee has no
+  `employees.view`). This also finally exercises `assertBranchAccess`
+  end-to-end instead of at the data-access-logic level only, closing a
+  verification gap noted since Phase 4.
+- **Standalone tasks**: `Task.customerId` was already nullable (Phase 2),
+  so no schema change was needed — only a new creation path
+  (`createStandaloneTaskAction`, gated on the new `tasks.create` rather
+  than `customers.edit`) and a `/tasks` page (My tasks / Team tasks,
+  the latter gated on `tasks.view`). `completeTaskAction` was generalized
+  so the person a task is assigned to can always mark it done regardless
+  of role — only completing *someone else's* task needs a permission
+  (`customers.edit` for a customer-linked task, `tasks.edit` otherwise).
+- **Notifications are in-app only** (brief §45: no fake channel) — a
+  `Notification` row is a real fact the recipient sees in the header bell,
+  full stop, no email/push claimed. `notifyMembership()` is the single
+  write path, called from `assignCustomerAction` (Phase 2) and both task
+  creation actions; it silently no-ops when you'd notify yourself (e.g.
+  assigning a task to your own membership). Verified in a real browser:
+  assigning a task and a customer to the same employee produced exactly
+  two unread notifications, each linking to the right page, and "mark all
+  read" cleared the header badge.
+- **Deliberately not built**: a generic workflow engine. The roadmap names
+  this phase "Employees/Tasks/**Workflows**/Notifications," but the only
+  "workflow" that exists anywhere in the app today is a task's
+  OPEN→DONE transition, which already worked before this phase. Building
+  a configurable, industry-agnostic workflow engine now — before Phase 10
+  (Industry Engine) has even defined what an industry-specific process
+  looks like — would be designing an abstraction with no real consumer
+  yet, which is exactly what brief §45 says not to do. Custom roles
+  (`roles.manage`, seeded since Phase 1, still unused) were left for the
+  same reason: a role-permission editor is a real feature, but nothing in
+  this phase needed it yet, and the invite flow only ever assigns one of
+  the three fixed system roles.
+
 ## Motion (hover + scroll)
 
 GSAP (`gsap`, `@gsap/react`) provides the product's hover and scroll
@@ -565,13 +647,27 @@ code that doesn't match `src/lib/db.ts`.
   gated behind `reports.financial` — the first feature to actually use
   that permission key since it was seeded in Phase 1
 
+**Phase 9 — Employees, Tasks & Notifications**
+- Real employee invitations (no fake email delivery — the invited person
+  just logs in normally and their membership activates on first login),
+  role assignment, branch scoping at invite time, suspend/reactivate
+- A privilege-escalation guard so only an Owner can grant the Owner role
+- Standalone tasks (not tied to a customer) with a `/tasks` page — My
+  tasks / Team tasks, gated by new `tasks.*` permissions
+- In-app notifications (a real header bell with unread count) fired when
+  a task or customer is assigned to someone
+- The project's first live two-membership cross-role browser test,
+  closing verification gaps left open since Phases 4, 7, and 8
+
 ## Known gaps / deliberately not built yet
 
 - No organization switcher — a user with multiple orgs always lands on the
   first membership found (`getDefaultMembershipOrRedirect`)
-- No employee invitation flow — an Owner exists (the org creator); there is
-  no UI yet to invite a second Membership
-- No custom-role UI (the `roles.manage` permission exists, unused)
+- No custom-role UI (the `roles.manage` permission exists, unused) — the
+  invite flow (Phase 9) only ever assigns one of the three fixed system
+  roles; branch assignment can be set at invite time but not edited after
+- No configurable workflow engine — a deliberate Phase 9 scoping decision,
+  see "Employees, Tasks & Notifications" above
 - Customer still has an optional `branchId` that nothing enforces —
   `assertBranchAccess()` is now real (see "Inventory" above) but not yet
   applied to Customer reads/writes
@@ -593,16 +689,18 @@ code that doesn't match `src/lib/db.ts`.
 - No partial-order invoicing — an invoice always covers a whole order;
   revisit if a real need for split invoices shows up
 - No invoice edit UI (create/void/pay only); no credit note / refund flow
-- `invoices.void`/`expenses.void`/`reports.financial` cross-role
-  enforcement is verified at the permission catalog and UI-gate level
-  only — a live two-membership browser test needs the employee invitation
-  flow (still not built, see above)
 - No expense edit UI (create/void only, matching Invoice); no recurring
   expenses; no receipt/file upload
 - Financial reporting is a single revenue-vs-expenses card for the current
   calendar month — no date-range picker, no per-branch or per-category
   breakdown, no export. Real but intentionally minimal; a fuller report
   is Phase 13's job (AI Business Intelligence), not this one's
+- No way to edit an employee's branch assignment after the invite, or to
+  remove a membership entirely (suspend is the only lifecycle action
+  besides role change)
+- Notifications have no per-type user preferences and no "notify me on X"
+  triggers beyond task/customer assignment — real but minimal, same
+  reasoning as the financial summary card
 - The Industry Engine, AI Business Intelligence — later phases per the
   roadmap, not started
 - Rate limiting is DB-query based, not a dedicated store; fine for now, but

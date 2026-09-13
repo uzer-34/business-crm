@@ -62,6 +62,12 @@ export const PERMISSION_CATALOG = [
   { key: "expenses.create", category: "Expenses", description: "Record expenses" },
   { key: "expenses.void", category: "Expenses", description: "Void recorded expenses" },
 
+  // Tasks (standalone, not tied to a customer — see customers.edit for
+  // customer-scoped tasks, which predate this category)
+  { key: "tasks.view", category: "Tasks", description: "View the team's task list" },
+  { key: "tasks.create", category: "Tasks", description: "Create and assign standalone tasks" },
+  { key: "tasks.edit", category: "Tasks", description: "Reassign or complete tasks assigned to others" },
+
   // Reports
   { key: "reports.sales", category: "Reports", description: "View sales reports" },
   { key: "reports.financial", category: "Reports", description: "View financial reports" },
@@ -113,6 +119,9 @@ export const SYSTEM_ROLES = [
       "expenses.view",
       "expenses.create",
       "expenses.void",
+      "tasks.view",
+      "tasks.create",
+      "tasks.edit",
       "reports.sales",
       "reports.financial",
     ] as PermissionKey[],
@@ -146,6 +155,13 @@ export const SYSTEM_ROLES = [
       // voiding one after the fact is a back-office correction.
       "expenses.view",
       "expenses.create",
+      // Employees can see and create their own team tasks day-to-day;
+      // reassigning or completing someone *else's* task (tasks.edit) is a
+      // supervisory action, same split as everywhere else in this catalog.
+      // They can still always complete a task assigned to themselves —
+      // that's enforced in code, not gated by a permission at all.
+      "tasks.view",
+      "tasks.create",
     ] as PermissionKey[],
   },
 ] as const;

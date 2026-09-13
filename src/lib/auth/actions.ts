@@ -66,6 +66,15 @@ export async function verifyOtpAction(input: {
     update: {},
   });
 
+  // An employee invite creates the User + a Membership with status INVITED
+  // ahead of time (see inviteEmployeeAction) — there's no separate invite
+  // link to click, the person just logs in normally. The first successful
+  // login after being invited is what actually activates the membership.
+  await db.membership.updateMany({
+    where: { userId: user.id, status: "INVITED" },
+    data: { status: "ACTIVE", joinedAt: new Date() },
+  });
+
   const ip = await getRequestIp();
   const h = await headers();
   const { token, expiresAt } = await createSession({
