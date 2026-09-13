@@ -31,6 +31,8 @@ model User {
   notes            Note[]
   createdTasks     Task[]
   activities       Activity[]
+  createdProducts  Product[]
+  createdServices  Service[]
 
   @@map("users")
 }
@@ -108,6 +110,9 @@ model Organization {
   notes       Note[]
   tasks       Task[]
   activities  Activity[]
+  categories  Category[]
+  products    Product[]
+  services    Service[]
 
   @@map("organizations")
 }
@@ -355,6 +360,111 @@ model Activity {
 
   @@index([organizationId, subjectType, subjectId, createdAt])
   @@map("activities")
+}
+
+// ---------------------------------------------------------------------------
+// Catalog: Category, Product (+ variants foundation), Service (brief
+// sections 19-20). Products/Services hold only generic fields — industry-
+// specific attributes (vehicle compatibility, garment fabric, ...) belong in
+// future per-industry modules or in ProductVariant.attributes, never as
+// columns here. Inventory, suppliers, and pricing-per-branch are Phase 4/5;
+// this is catalog data only.
+// ---------------------------------------------------------------------------
+
+enum CategoryKind {
+  PRODUCT
+  SERVICE
+}
+
+model Category {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  kind           CategoryKind
+  name           String
+  archivedAt     DateTime?    @db.Timestamptz(3)
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+
+  products Product[]
+  services Service[]
+
+  @@unique([organizationId, kind, name])
+  @@index([organizationId, kind, archivedAt])
+  @@map("categories")
+}
+
+model Product {
+  id              String       @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  categoryId      String?
+  category        Category?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  name            String
+  sku             String
+  barcode         String?
+  brand           String?
+  // Free-form unit label (e.g. "pcs", "kg", "box") — not a fixed enum since
+  // units genuinely vary by industry and we don't want a migration per unit.
+  unit            String       @default("pcs")
+  costPrice       Decimal      @db.Decimal(12, 2)
+  sellingPrice    Decimal      @db.Decimal(12, 2)
+  // Flat percentage (0-100). Full tax-jurisdiction configuration is out of
+  // scope until a real tax engine is needed (brief §41: don't fake it).
+  taxRatePercent  Decimal      @default(0) @db.Decimal(5, 2)
+  createdByUserId String
+  createdBy       User         @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdAt       DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
+  archivedAt      DateTime?    @db.Timestamptz(3)
+
+  variants ProductVariant[]
+
+  @@unique([organizationId, sku])
+  @@index([organizationId, archivedAt])
+  @@map("products")
+}
+
+// The variant "foundation" the brief asks for in Phase 3: a product with no
+// variants is sold directly; one with variants (e.g. Size/Color
+// combinations) is not yet wired into inventory or sales — those come in
+// Phase 4/6 and will transact against ProductVariant once they exist.
+model ProductVariant {
+  id           String    @id @default(cuid())
+  productId    String
+  product      Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sku          String
+  // Free-form attribute set, e.g. {"size": "M", "color": "Blue"}. Deliberately
+  // schemaless: which attributes matter is industry/product-specific.
+  attributes   Json
+  // Falls back to the parent Product's prices when null.
+  costPrice    Decimal?  @db.Decimal(12, 2)
+  sellingPrice Decimal?  @db.Decimal(12, 2)
+  archivedAt   DateTime? @db.Timestamptz(3)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@unique([productId, sku])
+  @@map("product_variants")
+}
+
+model Service {
+  id              String       @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  categoryId      String?
+  category        Category?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  name            String
+  description     String?
+  price           Decimal      @db.Decimal(12, 2)
+  durationMinutes Int?
+  taxRatePercent  Decimal      @default(0) @db.Decimal(5, 2)
+  createdByUserId String
+  createdBy       User         @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdAt       DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
+  archivedAt      DateTime?    @db.Timestamptz(3)
+
+  @@index([organizationId, archivedAt])
+  @@map("services")
 }
 
 model AuditLog {

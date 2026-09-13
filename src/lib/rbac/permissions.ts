@@ -20,6 +20,16 @@ export const PERMISSION_CATALOG = [
   { key: "customers.delete", category: "Customers", description: "Delete or archive customers" },
   { key: "customers.assign", category: "Customers", description: "Assign customers to employees" },
 
+  // Catalog: Products & Services
+  { key: "products.view", category: "Catalog", description: "View products" },
+  { key: "products.create", category: "Catalog", description: "Create products" },
+  { key: "products.edit", category: "Catalog", description: "Edit products and categories" },
+  { key: "products.archive", category: "Catalog", description: "Archive products" },
+  { key: "services.view", category: "Catalog", description: "View services" },
+  { key: "services.create", category: "Catalog", description: "Create services" },
+  { key: "services.edit", category: "Catalog", description: "Edit services and categories" },
+  { key: "services.archive", category: "Catalog", description: "Archive services" },
+
   // Reports
   { key: "reports.sales", category: "Reports", description: "View sales reports" },
   { key: "reports.financial", category: "Reports", description: "View financial reports" },
@@ -45,6 +55,12 @@ export const SYSTEM_ROLES = [
       "customers.create",
       "customers.edit",
       "customers.assign",
+      "products.view",
+      "products.create",
+      "products.edit",
+      "services.view",
+      "services.create",
+      "services.edit",
       "reports.sales",
       "reports.financial",
     ] as PermissionKey[],
@@ -57,6 +73,8 @@ export const SYSTEM_ROLES = [
       "customers.view",
       "customers.create",
       "customers.edit",
+      "products.view",
+      "services.view",
     ] as PermissionKey[],
   },
 ] as const;

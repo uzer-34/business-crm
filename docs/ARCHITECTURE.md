@@ -141,6 +141,48 @@ migration per new event type.
   the row being touched, not from a client-supplied organizationId — see
   `loadCustomerContext()` for the pattern.
 
+## Catalog: Products, Services, Categories, variants (Phase 3)
+
+- **Category** (`src/lib/catalog/category.ts`) is shared infrastructure for
+  both Products and Services, disambiguated by `kind`. There's no dedicated
+  category management screen — `findOrCreateCategory()` is called inline
+  from the product/service create forms (case-insensitive match within
+  `(organizationId, kind)` so "Parts" and "parts" don't become two rows).
+  Revisit with a real management UI once categories need edit/archive/reorder.
+- **Product** (§19) holds only generic catalog fields — name, SKU, barcode,
+  brand, unit, cost/selling price, a flat `taxRatePercent`. No supplier
+  reference yet (Supplier doesn't exist until Phase 5); no inventory
+  quantity (Phase 4 owns stock levels, keyed off Product/ProductVariant).
+  Industry-specific fields (vehicle compatibility, fabric, ...) do not
+  belong on this model — see `ProductVariant.attributes` or a future
+  per-industry module.
+- **ProductVariant** is deliberately just the "foundation" the brief asks
+  for: a schemaless `attributes` JSON bag (e.g. `{"size": "M"}`) and
+  optional price overrides that fall back to the parent Product. It is
+  *not* wired into inventory or sales yet — those come in Phase 4/6 and will
+  transact against `ProductVariant` once it exists. A product with zero
+  variants is sold directly on its own SKU/price.
+- **Service** (§20) mirrors Product's shape minus SKU/variants, plus
+  `durationMinutes`.
+- Money fields are `Decimal(12,2)` (never `Float` — avoids floating-point
+  drift on currency math) and rendered with `formatMoney()`
+  (`src/lib/format.ts`), which uses the organization's own `currencyCode`
+  and `locale` — never a hardcoded `$`.
+
+### Permission catalog evolution
+
+Adding `products.*`/`services.*` to `PERMISSION_CATALOG` only creates new
+`Permission` rows and grants them to *new* organizations (system roles are
+seeded from `SYSTEM_ROLES` once, at org-creation time). `prisma/seed.ts`'s
+`backfillSystemRolePermissions()` closes that gap: every time the seed runs,
+it diffs each existing system role's grants against its `SYSTEM_ROLES`
+template and adds whatever's missing — additive only, so it never revokes a
+permission the catalog later drops (an org might be relying on a manual
+grant). Verified by simulating a pre-Phase-3 org and confirming the reseed
+brought its Owner role from 13 to the full 21-permission catalog. **Any
+future permission catalog change should re-run `npm run db:seed` in every
+environment**, not just apply the migration.
+
 ## Motion (hover + scroll)
 
 GSAP (`gsap`, `@gsap/react`) provides the product's hover and scroll
@@ -197,6 +239,16 @@ code that doesn't match `src/lib/db.ts`.
   (previously a static empty state); stat tiles and lists have restrained
   hover/scroll motion (see "Motion" above)
 
+**Phase 3 — Products, Services, Categories**
+- Product list + detail page (SKU, brand, cost/selling price, category),
+  with a variants section (ProductVariant foundation, not yet wired to
+  anything downstream)
+- Service list + create (price, duration, category)
+- Categories created inline from either form (find-or-create, no dedicated
+  management screen yet)
+- Dashboard gained a real "Products" stat tile (replaced the "Open
+  invoices" placeholder, which had no real data behind it until Phase 6/7)
+
 ## Known gaps / deliberately not built yet
 
 - No organization switcher — a user with multiple orgs always lands on the
@@ -209,8 +261,12 @@ code that doesn't match `src/lib/db.ts`.
 - No customer edit/archive UI yet (create + assign only); no search/filter
   on the customer list beyond the default sort
 - Notes/Tasks have no dedicated permission keys — see "Customer 360" above
-- Products, Inventory, Sales, Invoices, Payments, Expenses, Industry Engine,
-  AI — all later phases per the roadmap, not started
+- No product/service edit or archive UI yet (create-only, matching the
+  Customer/Branch pattern so far); no dedicated Category management screen
+- ProductVariant exists but isn't consumed by anything yet — Phase 4
+  (Inventory) and Phase 6 (Sales) are what will actually transact against it
+- Inventory, Suppliers, Sales, Invoices, Payments, Expenses, Industry
+  Engine, AI — all later phases per the roadmap, not started
 - Rate limiting is DB-query based, not a dedicated store; fine for now, but
   the first thing to revisit if abuse patterns show up in production traffic
 

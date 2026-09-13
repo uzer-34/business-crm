@@ -30,18 +30,19 @@ async function loadAttentionTasks(organizationId: string) {
 export default async function DashboardPage() {
   const { membership } = await getDefaultMembershipOrRedirect();
 
-  const [branchCount, employeeCount, customerCount, attentionTasks] = await Promise.all([
+  const [branchCount, employeeCount, customerCount, productCount, attentionTasks] = await Promise.all([
     db.branch.count({ where: { organizationId: membership.organizationId, archivedAt: null } }),
     db.membership.count({ where: { organizationId: membership.organizationId, status: "ACTIVE" } }),
     db.customer.count({ where: { organizationId: membership.organizationId, archivedAt: null } }),
+    db.product.count({ where: { organizationId: membership.organizationId, archivedAt: null } }),
     loadAttentionTasks(membership.organizationId),
   ]);
 
   const stats = [
     { label: "Customers", value: customerCount },
+    { label: "Products", value: productCount },
     { label: "Branches", value: branchCount },
     { label: "Team members", value: employeeCount },
-    { label: "Open invoices", value: "—" },
   ];
 
   return (
