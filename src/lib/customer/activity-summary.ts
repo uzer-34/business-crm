@@ -14,6 +14,8 @@ export function summarizeActivity(activity: ActivityLike): string {
       return `Task created: ${typeof metadata.title === "string" ? metadata.title : ""}`;
     case "task.completed":
       return `Task completed: ${typeof metadata.title === "string" ? metadata.title : ""}`;
+    case "order.created":
+      return `Order placed${typeof metadata.orderNumber === "string" ? `: ${metadata.orderNumber}` : ""}`;
     default:
       return activity.type;
   }

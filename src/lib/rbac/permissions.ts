@@ -45,6 +45,12 @@ export const PERMISSION_CATALOG = [
   { key: "purchases.receive", category: "Purchasing", description: "Receive purchase order items and record payments" },
   { key: "purchases.cancel", category: "Purchasing", description: "Cancel purchase orders" },
 
+  // Sales
+  { key: "sales.view", category: "Sales", description: "View orders" },
+  { key: "sales.create", category: "Sales", description: "Create orders" },
+  { key: "sales.fulfill", category: "Sales", description: "Fulfill order items and record payments" },
+  { key: "sales.cancel", category: "Sales", description: "Cancel orders" },
+
   // Reports
   { key: "reports.sales", category: "Reports", description: "View sales reports" },
   { key: "reports.financial", category: "Reports", description: "View financial reports" },
@@ -85,6 +91,10 @@ export const SYSTEM_ROLES = [
       "purchases.view",
       "purchases.create",
       "purchases.receive",
+      "sales.view",
+      "sales.create",
+      "sales.fulfill",
+      "sales.cancel",
       "reports.sales",
       "reports.financial",
     ] as PermissionKey[],
@@ -102,6 +112,12 @@ export const SYSTEM_ROLES = [
       "inventory.view",
       "suppliers.view",
       "purchases.view",
+      // Unlike purchasing receipt (back-office), processing a sale is
+      // frontline checkout work — employees need to create and fulfill
+      // orders day-to-day, not just view them.
+      "sales.view",
+      "sales.create",
+      "sales.fulfill",
     ] as PermissionKey[],
   },
 ] as const;

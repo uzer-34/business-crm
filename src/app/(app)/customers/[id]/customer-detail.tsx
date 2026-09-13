@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,8 +21,9 @@ type Task = {
   assignedToLabel: string | null;
 };
 type ActivityItem = { id: string; type: string; createdAt: string; actorName: string | null; summary: string };
+type OrderSummary = { id: string; orderNumber: string; status: string; total: string };
 
-const TABS = ["Overview", "Activity", "Notes", "Tasks"] as const;
+const TABS = ["Overview", "Activity", "Notes", "Tasks", "Orders"] as const;
 type Tab = (typeof TABS)[number];
 
 export function CustomerDetail({
@@ -31,6 +33,9 @@ export function CustomerDetail({
   notes,
   tasks,
   activities,
+  orders,
+  currencyCode,
+  locale,
   canAssign,
   canEdit,
 }: {
@@ -40,6 +45,9 @@ export function CustomerDetail({
   notes: Note[];
   tasks: Task[];
   activities: ActivityItem[];
+  orders: OrderSummary[];
+  currencyCode: string;
+  locale: string;
   canAssign: boolean;
   canEdit: boolean;
 }) {
@@ -100,6 +108,54 @@ export function CustomerDetail({
       {tab === "Notes" && <NotesTab customerId={customerId} notes={notes} canEdit={canEdit} />}
 
       {tab === "Tasks" && <TasksTab customerId={customerId} tasks={tasks} canEdit={canEdit} />}
+
+      {tab === "Orders" && (
+        <OrdersTab customerId={customerId} orders={orders} currencyCode={currencyCode} locale={locale} />
+      )}
+    </div>
+  );
+}
+
+function OrdersTab({
+  customerId,
+  orders,
+  currencyCode,
+  locale,
+}: {
+  customerId: string;
+  orders: OrderSummary[];
+  currencyCode: string;
+  locale: string;
+}) {
+  const formatter = new Intl.NumberFormat(locale, { style: "currency", currency: currencyCode });
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Link
+        href={`/orders/new?customerId=${customerId}`}
+        className="inline-flex h-9 w-fit items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:opacity-90"
+      >
+        New order
+      </Link>
+
+      {orders.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No orders yet.</p>
+      ) : (
+        <RevealOnScroll className="flex flex-col gap-2">
+          {orders.map((order) => (
+            <Link key={order.id} href={`/orders/${order.id}`}>
+              <Card>
+                <CardContent className="flex items-center justify-between p-3">
+                  <span className="text-sm font-medium">{order.orderNumber}</span>
+                  <span className="text-sm text-muted-foreground">
+                    {order.status.replace("_", " ").toLowerCase()} · {formatter.format(Number(order.total))}
+                  </span>
+                </CardContent>
+              </Card>
+            </Link>
+          ))}
+        </RevealOnScroll>
+      )}
     </div>
   );
 }

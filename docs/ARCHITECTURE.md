@@ -284,6 +284,63 @@ Supplier -> PurchaseOrder -> receiving -> Inventory -> supplier balance
   `{id, name, sku, variants}` shapes, never raw Prisma records with
   `Decimal` fields.
 
+## Sales (Phase 6)
+
+Customer -> Order -> Order Items -> Inventory -> Payment (brief §23),
+deliberately mirroring Purchasing's lifecycle shape:
+
+- **Order** supports a nullable `customerId` — a walk-in/point-of-sale sale
+  doesn't require creating a Customer record first. Same
+  ORDERED-style/no-draft reasoning as PurchaseOrder: no quote/cart workflow,
+  an Order exists the moment it's created.
+- **OrderItem** is the first model in this schema that references *two*
+  different catalog types: a line is either a Product (optionally a
+  variant) or a Service, never both, never neither. Prisma's schema DSL
+  can't express that as a real constraint, so — same fix as the
+  `variantKey` lesson in Phase 4 — a hand-written CHECK constraint
+  (`order_items_product_xor_service`) was added via a follow-up migration
+  (`prisma migrate dev --create-only`, then hand-edited) on top of
+  `createOrderAction`'s own validation. Verified directly: a raw `INSERT`
+  with neither `productId` nor `serviceId` set is rejected by Postgres,
+  not just by the application.
+- **Fulfillment, not creation, is what touches inventory** — same
+  separation as Purchasing's receiving step. `fulfillOrderItemAction` calls
+  Phase 4's `applyStockMovement()` with `type: "SALE"` and the real
+  `orderItemId` FK (`InventoryMovement.reference`'s comment has been wrong
+  twice now in the "not a real FK yet" direction — Phase 5 fixed it for
+  purchasing, this fixes it for sales). **Service line items never call
+  `applyStockMovement` at all** — fulfilling a service just increments
+  `quantityFulfilled`, no stock check, no movement row. Verified in a real
+  browser: fulfilling a Gift Wrapping service line left the branch's
+  T-Shirt stock completely unchanged, while fulfilling the T-Shirt line
+  moved it exactly as expected.
+- The stock-sufficiency check moved *inside* the transaction
+  (`getStockQuantity(tx, ...)` immediately before `applyStockMovement`),
+  not before it — the first draft of this action checked stock with a
+  separate pre-transaction query, which is the same race condition Phase 4
+  deliberately avoided by checking inside the transaction. Caught and fixed
+  during this phase's own code review, before it ever ran against real data.
+- **Discounts are per-line, not per-order.** `discountPercent` reduces a
+  line's subtotal before tax is calculated on the discounted amount —
+  matches how real receipts compute tax on the post-discount price, not
+  the list price.
+- Same branch-scoping and Decimal-arithmetic discipline as Phase 5:
+  `assertBranchAccess` on both create and fulfill; totals computed with
+  `Prisma.Decimal`, never raw floats.
+- Order placement appends to the **customer's own activity timeline**
+  (`order.created`, shown as "Order placed: SO-0001") when the order has a
+  customer — the first cross-module use of Phase 2's Activity model, closing
+  the loop the brief's §18 examples always pointed at ("Product purchased").
+- Closes a documented gap from Phase 2: Customer 360 now has a real
+  **Orders tab** (brief §17 listed it from the start), including a
+  "New order" shortcut that pre-selects the customer via
+  `/orders/new?customerId=...`.
+- RBAC differs from Purchasing on purpose: employees get
+  `sales.create`/`sales.fulfill`, not just `sales.view`. Processing a sale
+  is frontline checkout work a cashier does constantly; receiving a
+  purchase order is comparatively rare back-office work. Same reasoning
+  that already put `customers.create`/`edit` in the Employee role.
+
 ## Motion (hover + scroll)
 
 GSAP (`gsap`, `@gsap/react`) provides the product's hover and scroll
@@ -371,6 +428,17 @@ code that doesn't match `src/lib/db.ts`.
   free-text `reference` now that a real table exists to point to
 - `Product.preferredSupplierId` — closes a gap flagged since Phase 3
 
+**Phase 6 — Sales**
+- Order creation (dedicated page, mixed product/service line items with
+  per-line discount and tax) with an org-scoped sequential order number
+- Fulfillment (partial or full) creating real `SALE` movements for product
+  lines; service lines fulfill without touching inventory at all
+- Hand-written CHECK constraint enforcing OrderItem's product-xor-service
+  invariant at the database level, not just in application code
+- Payment status tracking, same running-total pattern as Purchasing
+- Customer 360 gained a real Orders tab — closes a gap flagged since Phase 2
+- Order creation logs to the customer's own activity timeline
+
 ## Known gaps / deliberately not built yet
 
 - No organization switcher — a user with multiple orgs always lands on the
@@ -386,19 +454,18 @@ code that doesn't match `src/lib/db.ts`.
 - Notes/Tasks have no dedicated permission keys — see "Customer 360" above
 - No product/service edit or archive UI yet (create-only, matching the
   Customer/Branch pattern so far); no dedicated Category management screen
-- ProductVariant exists and inventory can track stock per variant, but
-  nothing consumes variants yet beyond that — Phase 6 (Sales) is what will
-  actually sell against them
-- `SALE`/`RETURN` exist as `InventoryMovementType` values but nothing
-  creates them yet — Phase 6 (Sales) will
 - No per-product movement history page — the inventory page shows the last
   20 movements for the whole branch, not filtered per product
 - No PO edit/cancel UI yet (`purchases.cancel` permission exists, unused);
   no supplier edit/archive UI (create-only, matching every other module)
 - No supplier balance report — the outstanding-per-PO figure exists, but
   nothing rolls it up across all of a supplier's purchase orders yet
-- Sales, Invoices, Payments, Expenses, Industry Engine, AI — all later
-  phases per the roadmap, not started
+- `RETURN` exists as an `InventoryMovementType` value but nothing creates
+  it yet; no order edit/cancel UI (`sales.cancel` permission exists, unused)
+- No order-level discount, only per-line — fine for now, revisit if a
+  storewide/cart-level discount becomes a real requirement
+- Invoices, Payments (the full ledger), Expenses, Industry Engine, AI —
+  all later phases per the roadmap, not started
 - Rate limiting is DB-query based, not a dedicated store; fine for now, but
   the first thing to revisit if abuse patterns show up in production traffic
 

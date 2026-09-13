@@ -14,13 +14,13 @@ export default async function CustomerPage({ params }: PageProps<"/customers/[id
   const user = await getCurrentUser();
   if (!user) notFound();
 
-  const customer = await db.customer.findUnique({ where: { id } });
+  const customer = await db.customer.findUnique({ where: { id }, include: { organization: true } });
   if (!customer) notFound();
 
   const ctx = await loadTenantContext(user.id, customer.organizationId);
   if (!ctx) notFound();
 
-  const [notesRaw, tasksRaw, activitiesRaw, membersRaw] = await Promise.all([
+  const [notesRaw, tasksRaw, activitiesRaw, membersRaw, ordersRaw] = await Promise.all([
     db.note.findMany({
       where: { customerId: id },
       include: { author: true },
@@ -40,6 +40,10 @@ export default async function CustomerPage({ params }: PageProps<"/customers/[id
     db.membership.findMany({
       where: { organizationId: ctx.organizationId, status: "ACTIVE" },
       include: { user: true },
+    }),
+    db.order.findMany({
+      where: { customerId: id },
+      orderBy: { createdAt: "desc" },
     }),
   ]);
 
@@ -71,6 +75,13 @@ export default async function CustomerPage({ params }: PageProps<"/customers/[id
     label: m.user.name ?? m.user.email ?? m.user.phone ?? "Member",
   }));
 
+  const orders = ordersRaw.map((o) => ({
+    id: o.id,
+    orderNumber: o.orderNumber,
+    status: o.status,
+    total: o.total.toString(),
+  }));
+
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
       <Card>
@@ -94,6 +105,9 @@ export default async function CustomerPage({ params }: PageProps<"/customers/[id
         notes={notes}
         tasks={tasks}
         activities={activities}
+        orders={orders}
+        currencyCode={customer.organization.currencyCode}
+        locale={customer.organization.locale}
         canAssign={ctx.permissions.has("customers.assign")}
         canEdit={ctx.permissions.has("customers.edit")}
       />

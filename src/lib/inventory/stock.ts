@@ -27,6 +27,7 @@ export async function applyStockMovement(
     reference?: string;
     transferGroupId?: string;
     purchaseOrderItemId?: string;
+    orderItemId?: string;
     actorUserId: string;
   },
 ): Promise<void> {
@@ -46,6 +47,7 @@ export async function applyStockMovement(
       reference: params.reference,
       transferGroupId: params.transferGroupId,
       purchaseOrderItemId: params.purchaseOrderItemId,
+      orderItemId: params.orderItemId,
       actorUserId: params.actorUserId,
     },
   });
