@@ -11,6 +11,7 @@ export const createProductSchema = z.object({
   costPrice: z.coerce.number().nonnegative(),
   sellingPrice: z.coerce.number().nonnegative(),
   taxRatePercent: z.coerce.number().min(0).max(100).default(0),
+  reorderPoint: z.coerce.number().int().nonnegative().optional(),
   categoryName: z.string().trim().max(80).optional(),
 });
 

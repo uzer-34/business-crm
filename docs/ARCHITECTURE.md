@@ -183,6 +183,65 @@ brought its Owner role from 13 to the full 21-permission catalog. **Any
 future permission catalog change should re-run `npm run db:seed` in every
 environment**, not just apply the migration.
 
+## Inventory (Phase 4)
+
+A movement ledger, not a mutable quantity column, per the brief's explicit
+formula in §21:
+
+- **InventoryMovement** is an append-only log: every stock change is a row
+  with a signed `quantityDelta` (positive = in, negative = out) and a
+  `type` recording intent (`OPENING`, `ADJUSTMENT`, `TRANSFER_IN/OUT`,
+  `DAMAGED` — plus `PURCHASE`/`SALE`/`RETURN`, reserved for Phase 5/6, which
+  nothing in this phase creates yet). Never deleted or edited after the
+  fact; a correction is a new movement, not a mutation.
+- **StockLevel** is a materialized projection (current balance per
+  branch/product/variant) kept in sync transactionally with every
+  `InventoryMovement` insert (`applyStockMovement()` in
+  `src/lib/inventory/stock.ts`) — the two can never drift, because nothing
+  writes to `StockLevel` except that one function, and it always writes
+  both rows in the same transaction. Verified directly against the ledger
+  (`SUM(quantityDelta)` per branch matched `StockLevel.quantity` exactly
+  after a mixed sequence of opening stock, a transfer, and a damage
+  write-off).
+- **variantKey**: Postgres unique indexes treat `NULL <> NULL`, so a
+  nullable `variantId` can't anchor a real uniqueness constraint — two
+  "no variant" rows for the same product wouldn't conflict and the
+  projection would silently fork into duplicate balances. `variantKey` is
+  always non-null (`""` for the base product, the variant's id otherwise)
+  and is what the actual `@@unique([branchId, productId, variantKey])`
+  constraint uses.
+- Transfers create **two** movements (`TRANSFER_OUT` at the source,
+  `TRANSFER_IN` at the destination) sharing a `transferGroupId`, in one
+  transaction, after checking the source has enough stock. Any movement
+  that would take a balance negative is rejected with "Insufficient stock"
+  before either write happens.
+- This is the first real caller of `assertBranchAccess()` (defined in
+  Phase 1, unused until now — flagged as a known gap in every prior version
+  of this doc). Both `recordMovementAction` and `transferStockAction` check
+  it, and `transferStockAction` checks it for *both* branches. Verified
+  directly against the guard's own query logic: an employee membership
+  scoped to one branch (via `MembershipBranch`, `allBranches: false`) gets
+  `hasBranchAccess = true` for its assigned branch and `false` for another
+  branch in the same org. There's no UI yet to create such a membership
+  (see "Known gaps") — this was verified at the data-access-logic level,
+  not through a second logged-in browser session.
+- **Low-stock alerts**: `Product.reorderPoint` (optional) plus a dashboard
+  query (`loadLowStock()`) — deliberately minimal, no notifications, just a
+  list next to the existing overdue-tasks one. Prisma can't compare two
+  columns (`quantity` vs. `reorderPoint`) in a `where` clause, so this
+  fetches candidates and filters in JS; fine at today's scale, worth a raw
+  query or a maintained flag if the catalog grows large.
+- **Client/server boundary pitfall caught during testing**: the inventory
+  page originally passed full `Product` records (including `Decimal`
+  fields) as props into the client-side movement/transfer forms. Prisma's
+  `Decimal` is a Decimal.js instance, not a plain object, and React silently
+  logs a "not supported" console error for every such prop instead of
+  failing the build — it only surfaces by actually opening the page in a
+  browser and watching the console, which is exactly why that's part of
+  this project's verification step, not just `npm run check`. Fixed by
+  mapping to a plain `{id, name, sku, variants}` shape before passing
+  across the boundary (`productOptions` in `inventory/page.tsx`).
+
 ## Motion (hover + scroll)
 
 GSAP (`gsap`, `@gsap/react`) provides the product's hover and scroll
@@ -249,6 +308,16 @@ code that doesn't match `src/lib/db.ts`.
 - Dashboard gained a real "Products" stat tile (replaced the "Open
   invoices" placeholder, which had no real data behind it until Phase 6/7)
 
+**Phase 4 — Inventory**
+- Movement-based stock ledger (`InventoryMovement`) with a materialized
+  `StockLevel` projection kept transactionally in sync
+- Inventory page: branch switcher (scoped to the caller's accessible
+  branches), stock table with a low-stock indicator, record-movement
+  (opening/adjustment/damaged) and transfer-between-branches dialogs,
+  recent movements list
+- First real use of `assertBranchAccess()` from Phase 1 — closes that gap
+- Dashboard gained a real "Low stock" section next to the tasks one
+
 ## Known gaps / deliberately not built yet
 
 - No organization switcher — a user with multiple orgs always lands on the
@@ -256,17 +325,23 @@ code that doesn't match `src/lib/db.ts`.
 - No employee invitation flow — an Owner exists (the org creator); there is
   no UI yet to invite a second Membership
 - No custom-role UI (the `roles.manage` permission exists, unused)
-- `assertBranchAccess()` is unused until a branch-scoped data model exists
-  (Customer has an optional `branchId` but nothing enforces it yet)
+- Customer still has an optional `branchId` that nothing enforces —
+  `assertBranchAccess()` is now real (see "Inventory" above) but not yet
+  applied to Customer reads/writes
 - No customer edit/archive UI yet (create + assign only); no search/filter
   on the customer list beyond the default sort
 - Notes/Tasks have no dedicated permission keys — see "Customer 360" above
 - No product/service edit or archive UI yet (create-only, matching the
   Customer/Branch pattern so far); no dedicated Category management screen
-- ProductVariant exists but isn't consumed by anything yet — Phase 4
-  (Inventory) and Phase 6 (Sales) are what will actually transact against it
-- Inventory, Suppliers, Sales, Invoices, Payments, Expenses, Industry
-  Engine, AI — all later phases per the roadmap, not started
+- ProductVariant exists and inventory can track stock per variant, but
+  nothing consumes variants yet beyond that — Phase 6 (Sales) is what will
+  actually sell against them
+- `PURCHASE`/`SALE`/`RETURN` exist as `InventoryMovementType` values but
+  nothing creates them yet — Phase 5 (Purchasing) and Phase 6 (Sales) will
+- No per-product movement history page — the inventory page shows the last
+  20 movements for the whole branch, not filtered per product
+- Suppliers, Sales, Invoices, Payments, Expenses, Industry Engine, AI —
+  all later phases per the roadmap, not started
 - Rate limiting is DB-query based, not a dedicated store; fine for now, but
   the first thing to revisit if abuse patterns show up in production traffic
 

@@ -27,15 +27,31 @@ async function loadAttentionTasks(organizationId: string) {
   }));
 }
 
+// Prisma can't compare two columns (quantity vs. reorderPoint) in a where
+// clause, so this fetches candidates (products with a threshold set) and
+// filters in JS. Fine at the scale a single branch's catalog reaches;
+// revisit with a raw query or a maintained "isLowStock" flag if it grows.
+async function loadLowStock(organizationId: string) {
+  const levels = await db.stockLevel.findMany({
+    where: { organizationId, product: { reorderPoint: { not: null } } },
+    include: { product: true, branch: true, variant: true },
+  });
+
+  return levels
+    .filter((level) => level.product.reorderPoint != null && level.quantity <= level.product.reorderPoint)
+    .slice(0, 5);
+}
+
 export default async function DashboardPage() {
   const { membership } = await getDefaultMembershipOrRedirect();
 
-  const [branchCount, employeeCount, customerCount, productCount, attentionTasks] = await Promise.all([
+  const [branchCount, employeeCount, customerCount, productCount, attentionTasks, lowStock] = await Promise.all([
     db.branch.count({ where: { organizationId: membership.organizationId, archivedAt: null } }),
     db.membership.count({ where: { organizationId: membership.organizationId, status: "ACTIVE" } }),
     db.customer.count({ where: { organizationId: membership.organizationId, archivedAt: null } }),
     db.product.count({ where: { organizationId: membership.organizationId, archivedAt: null } }),
     loadAttentionTasks(membership.organizationId),
+    loadLowStock(membership.organizationId),
   ]);
 
   const stats = [
@@ -100,6 +116,35 @@ export default async function DashboardPage() {
           )}
         </CardContent>
       </Card>
+
+      {lowStock.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Low stock</CardTitle>
+            <CardDescription>Products at or below their reorder point.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <RevealOnScroll className="flex flex-col gap-2">
+              {lowStock.map((level) => (
+                <Link
+                  key={level.id}
+                  href="/inventory"
+                  className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm hover:bg-accent"
+                >
+                  <span>
+                    {level.product.name}
+                    {level.variant && ` · ${level.variant.sku}`}
+                    <span className="text-muted-foreground"> — {level.branch.name}</span>
+                  </span>
+                  <span className="text-danger">
+                    {level.quantity} {level.product.unit} left
+                  </span>
+                </Link>
+              ))}
+            </RevealOnScroll>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

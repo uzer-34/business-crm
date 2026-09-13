@@ -21,6 +21,7 @@ export function NewProductForm({
   const [categoryName, setCategoryName] = useState("");
   const [costPrice, setCostPrice] = useState("");
   const [sellingPrice, setSellingPrice] = useState("");
+  const [reorderPoint, setReorderPoint] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -42,6 +43,7 @@ export function NewProductForm({
               categoryName: categoryName || undefined,
               costPrice,
               sellingPrice,
+              reorderPoint: reorderPoint || undefined,
             });
             if (!result.ok) {
               setError(result.error);
@@ -102,6 +104,18 @@ export function NewProductForm({
               required
             />
           </div>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="product-reorder">Reorder point (optional)</Label>
+          <Input
+            id="product-reorder"
+            type="number"
+            min="0"
+            step="1"
+            value={reorderPoint}
+            onChange={(e) => setReorderPoint(e.target.value)}
+            placeholder="Get a low-stock alert at or below this quantity"
+          />
         </div>
 
         {error && <p className="text-sm text-danger">{error}</p>}
