@@ -3,15 +3,15 @@ import type { Prisma } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
 
 /**
- * Categories are created inline from the product/service form rather than
- * through a dedicated management screen (brief §19-20 don't call for one
- * yet) — this is the shared find-or-create used by both. Case-insensitive
- * match on name within (organization, kind) so "Parts" and "parts" don't
- * become two categories.
+ * Categories are created inline from the product/service/expense form
+ * rather than through a dedicated management screen (brief §19-20 don't
+ * call for one yet) — this is the shared find-or-create used by all three.
+ * Case-insensitive match on name within (organization, kind) so "Parts"
+ * and "parts" don't become two categories.
  */
 export async function findOrCreateCategory(
   tx: Prisma.TransactionClient | typeof db,
-  params: { organizationId: string; kind: "PRODUCT" | "SERVICE"; name: string },
+  params: { organizationId: string; kind: "PRODUCT" | "SERVICE" | "EXPENSE"; name: string },
 ): Promise<string> {
   const trimmed = params.name.trim();
 

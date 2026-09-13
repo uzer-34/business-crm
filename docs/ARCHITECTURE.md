@@ -401,6 +401,50 @@ real append-only financial ledger rather than a running-total field:
   (`invoices.create` permission) or a link to the invoice that already
   exists for it — an order can only ever have one invoice in this phase.
 
+## Expenses & Financial Reporting (Phase 8)
+
+Money going out, and the first cross-module report (brief §25):
+
+- **`Expense` reuses `Category` rather than introducing an `ExpenseCategory`
+  model** — `CategoryKind` gained an `EXPENSE` value alongside `PRODUCT`/
+  `SERVICE`, and `findOrCreateCategory()` (Phase 3) was widened to accept
+  it. Same inline find-or-create UX as Products/Services, same
+  case-insensitive match — verified in a real browser: entering "Rent"
+  then "rent" on two different expenses resolved to the same Category row,
+  not two.
+- **`method` reuses `PaymentMethod`** (Phase 7's enum) rather than a new
+  one — an expense payment method is the same concept as an invoice
+  payment method, no reason to duplicate the enum.
+- **Void, not delete** — same "correction, not erasure" discipline as
+  Invoice: a mistaken entry becomes `status: VOID` (with `voidedAt` set),
+  never removed, so the audit trail and any past report that already
+  counted it stay explainable. `expenses.void` is manager+ only, same
+  reasoning as `invoices.void`/`sales.cancel`: an employee can record a
+  petty-cash expense as frontline work, but voiding one after the fact is
+  a back-office correction.
+- **Branch-scoped** like every other transactional model — `assertBranchAccess`
+  on create, `branchId` required (not optional): an expense always belongs
+  to a specific branch's books, unlike a walk-in Order's optional customer.
+- **The financial summary lives on the Expenses page itself, gated behind
+  `reports.financial`**, rather than a separate `/reports` route or a
+  dashboard card — this phase's only report is "this month's revenue
+  (issued invoices) minus expenses," and putting it where expenses are
+  already being reviewed avoided a second page for one number. Revenue is
+  `SUM(Invoice.total)` for non-void invoices issued this calendar month;
+  expenses is `SUM(Expense.amount)` for non-void expenses incurred this
+  calendar month — both computed with `Prisma.Decimal`, not raw floats.
+  A dedicated reports section can split out if more reports get added
+  later; one card wasn't worth the extra route yet.
+- **Found and fixed during this phase's own verification**: the expense
+  list originally sorted by `incurredAt` alone, but `incurredAt` only
+  carries date precision (the form is a plain date input) — two expenses
+  logged on the same day landed with an *identical* timestamp, making
+  their relative order in the list unstable across queries. A real
+  browser test caught this directly: voiding "the last expense in the
+  list" voided the wrong one. Fixed by adding `createdAt: "desc"` as a
+  secondary sort key, so same-day expenses now stay ordered
+  most-recently-entered-first.
+
 ## Motion (hover + scroll)
 
 GSAP (`gsap`, `@gsap/react`) provides the product's hover and scroll
@@ -512,6 +556,15 @@ code that doesn't match `src/lib/db.ts`.
 - Dashboard gained a real Outstanding invoices section; Customer 360
   gained a real Invoices tab — closes a gap flagged since Phase 6
 
+**Phase 8 — Expenses & Financial Reporting**
+- Expense recording (branch-scoped, method/payee/reference/notes/category),
+  reusing Phase 7's `PaymentMethod` enum and Phase 3's Category
+  find-or-create pattern (extended with a new `EXPENSE` CategoryKind)
+- Void (not delete) for correcting a mistaken entry, manager+ only
+- A real "this month" revenue-vs-expenses summary on the Expenses page,
+  gated behind `reports.financial` — the first feature to actually use
+  that permission key since it was seeded in Phase 1
+
 ## Known gaps / deliberately not built yet
 
 - No organization switcher — a user with multiple orgs always lands on the
@@ -540,11 +593,18 @@ code that doesn't match `src/lib/db.ts`.
 - No partial-order invoicing — an invoice always covers a whole order;
   revisit if a real need for split invoices shows up
 - No invoice edit UI (create/void/pay only); no credit note / refund flow
-- `invoices.void` cross-role enforcement is verified at the permission
-  catalog and UI-gate level only — a live two-membership browser test
-  needs the employee invitation flow (still not built, see above)
-- Expenses, the Industry Engine, AI Business Intelligence — later phases
-  per the roadmap, not started
+- `invoices.void`/`expenses.void`/`reports.financial` cross-role
+  enforcement is verified at the permission catalog and UI-gate level
+  only — a live two-membership browser test needs the employee invitation
+  flow (still not built, see above)
+- No expense edit UI (create/void only, matching Invoice); no recurring
+  expenses; no receipt/file upload
+- Financial reporting is a single revenue-vs-expenses card for the current
+  calendar month — no date-range picker, no per-branch or per-category
+  breakdown, no export. Real but intentionally minimal; a fuller report
+  is Phase 13's job (AI Business Intelligence), not this one's
+- The Industry Engine, AI Business Intelligence — later phases per the
+  roadmap, not started
 - Rate limiting is DB-query based, not a dedicated store; fine for now, but
   the first thing to revisit if abuse patterns show up in production traffic
 

@@ -39,6 +39,7 @@ model User {
   createdOrders         Order[]
   createdInvoices       Invoice[]
   recordedPayments      Payment[]
+  recordedExpenses      Expense[]
 
   @@map("users")
 }
@@ -133,6 +134,7 @@ model Organization {
   orders             Order[]
   invoices           Invoice[]
   payments           Payment[]
+  expenses           Expense[]
 
   @@map("organizations")
 }
@@ -162,6 +164,7 @@ model Branch {
   purchaseOrders     PurchaseOrder[]
   orders             Order[]
   invoices           Invoice[]
+  expenses           Expense[]
 
   @@index([organizationId])
   @@map("branches")
@@ -402,6 +405,7 @@ model Activity {
 enum CategoryKind {
   PRODUCT
   SERVICE
+  EXPENSE
 }
 
 model Category {
@@ -415,6 +419,7 @@ model Category {
 
   products Product[]
   services Service[]
+  expenses Expense[]
 
   @@unique([organizationId, kind, name])
   @@index([organizationId, kind, archivedAt])
@@ -893,6 +898,50 @@ model Payment {
 
   @@index([invoiceId, createdAt])
   @@map("payments")
+}
+
+enum ExpenseStatus {
+  RECORDED
+  VOID
+}
+
+// Records money going out (rent, utilities, supplies, wages paid in cash,
+// etc. — brief §25). Deliberately simple: no approval workflow, no
+// recurring-expense scheduling, no receipt/file upload yet (brief §41/§45:
+// don't build a feature until there's a real need for it). A mistaken entry
+// is voided, never deleted — same "correction, not erasure" discipline as
+// Invoice, and for the same reason: financial records must stay auditable.
+model Expense {
+  id              String        @id @default(cuid())
+  organizationId  String
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branchId        String
+  branch          Branch        @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  categoryId      String?
+  category        Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  amount          Decimal       @db.Decimal(12, 2)
+  method          PaymentMethod
+  // Who was paid — a vendor name, landlord, employee, etc. Free text: not
+  // every payee is a Supplier record, and forcing one here would put the
+  // Supplier module in the critical path of recording a cash expense.
+  payee           String?
+  // Free-form, same reasoning as Payment.reference (receipt #, cheque #).
+  reference       String?
+  notes           String?
+  status          ExpenseStatus @default(RECORDED)
+  // The date the expense was actually incurred — distinct from createdAt,
+  // since expenses are often logged after the fact (e.g. entering last
+  // week's receipts in a batch).
+  incurredAt      DateTime      @db.Timestamptz(3)
+  voidedAt        DateTime?     @db.Timestamptz(3)
+  recordedByUserId String
+  recordedBy      User          @relation(fields: [recordedByUserId], references: [id], onDelete: Restrict)
+  createdAt       DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime      @updatedAt @db.Timestamptz(3)
+
+  @@index([organizationId, incurredAt])
+  @@index([branchId, incurredAt])
+  @@map("expenses")
 }
 
 model AuditLog {

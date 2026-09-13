@@ -57,6 +57,11 @@ export const PERMISSION_CATALOG = [
   { key: "invoices.void", category: "Invoicing", description: "Void invoices" },
   { key: "payments.record", category: "Invoicing", description: "Record payments against invoices" },
 
+  // Expenses
+  { key: "expenses.view", category: "Expenses", description: "View expenses" },
+  { key: "expenses.create", category: "Expenses", description: "Record expenses" },
+  { key: "expenses.void", category: "Expenses", description: "Void recorded expenses" },
+
   // Reports
   { key: "reports.sales", category: "Reports", description: "View sales reports" },
   { key: "reports.financial", category: "Reports", description: "View financial reports" },
@@ -105,6 +110,9 @@ export const SYSTEM_ROLES = [
       "invoices.create",
       "invoices.void",
       "payments.record",
+      "expenses.view",
+      "expenses.create",
+      "expenses.void",
       "reports.sales",
       "reports.financial",
     ] as PermissionKey[],
@@ -133,6 +141,11 @@ export const SYSTEM_ROLES = [
       "invoices.view",
       "invoices.create",
       "payments.record",
+      // Same reasoning as invoices.create: recording a day-to-day expense
+      // (e.g. paying a delivery courier from petty cash) is frontline work;
+      // voiding one after the fact is a back-office correction.
+      "expenses.view",
+      "expenses.create",
     ] as PermissionKey[],
   },
 ] as const;
