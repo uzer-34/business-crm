@@ -1,0 +1,245 @@
+// Phase 1 foundation schema: passwordless auth, tenancy (User -> Membership ->
+// Organization -> Branch), RBAC, and audit logging. See docs/ARCHITECTURE.md.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Identity & authentication
+// ---------------------------------------------------------------------------
+
+model User {
+  id        String   @id @default(cuid())
+  // E.164 format (e.g. +14155552671). Nullable: a user may authenticate with
+  // only phone or only email.
+  phone     String?  @unique
+  email     String?  @unique
+  name      String?
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  memberships Membership[]
+  sessions    Session[]
+  auditLogs   AuditLog[]
+
+  @@map("users")
+}
+
+enum OtpChannel {
+  PHONE
+  EMAIL
+}
+
+// A single OTP challenge. One row per code sent; never overwritten so the
+// full attempt/resend history stays auditable.
+model OtpChallenge {
+  id          String     @id @default(cuid())
+  channel     OtpChannel
+  // The phone (E.164) or email address the code was sent to.
+  target      String
+  codeHash    String
+  expiresAt   DateTime   @db.Timestamptz(3)
+  attempts    Int        @default(0)
+  maxAttempts Int        @default(5)
+  consumedAt  DateTime?  @db.Timestamptz(3)
+  requestIp   String?
+  createdAt   DateTime   @default(now()) @db.Timestamptz(3)
+
+  @@index([target, channel, createdAt])
+  @@map("otp_challenges")
+}
+
+// Opaque server-side session. The cookie holds only the random token; we
+// store its hash so a leaked database dump doesn't yield live sessions.
+model Session {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  userAgent  String?
+  ip         String?
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  lastUsedAt DateTime  @default(now()) @db.Timestamptz(3)
+  expiresAt  DateTime  @db.Timestamptz(3)
+  revokedAt  DateTime? @db.Timestamptz(3)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy: Organization -> Branch, User <-> Organization via Membership
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id           String   @id @default(cuid())
+  name         String
+  legalName    String?
+  // ISO 3166-1 alpha-2 (e.g. "US", "IN", "AE").
+  countryCode  String
+  // ISO 4217 (e.g. "USD", "INR", "AED").
+  currencyCode String
+  // IANA timezone identifier (e.g. "America/New_York", "Asia/Kolkata").
+  timezone     String
+  // BCP-47 locale (e.g. "en-US", "en-IN").
+  locale       String
+  // Industry key resolved against the code-level industry registry
+  // (src/lib/industry/registry.ts). Free-form on purpose: the Industry
+  // Engine (Phase 10) will move this to a richer, still additive, model.
+  industryKey  String   @default("generic")
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+
+  branches    Branch[]
+  memberships Membership[]
+  roles       Role[]
+  auditLogs   AuditLog[]
+
+  @@map("organizations")
+}
+
+model Branch {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  addressLine1   String?
+  addressLine2   String?
+  city           String?
+  region         String?
+  postalCode     String?
+  // ISO 3166-1 alpha-2; defaults to the parent organization's country but can
+  // differ for a branch operating cross-border.
+  countryCode    String
+  isDefault      Boolean      @default(false)
+  archivedAt     DateTime?    @db.Timestamptz(3)
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
+
+  membershipBranches MembershipBranch[]
+
+  @@index([organizationId])
+  @@map("branches")
+}
+
+enum MembershipStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+}
+
+// Links a User to an Organization with exactly one Role. Branch scope is
+// explicit: allBranches=true (set for Owner/Manager by default) grants every
+// branch in the org; otherwise access is limited to the linked
+// MembershipBranch rows. Every tenant-scoped query must resolve the caller's
+// organizationId from this table server-side — never from client input.
+model Membership {
+  id             String           @id @default(cuid())
+  userId         String
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  roleId         String
+  role           Role             @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  status         MembershipStatus @default(ACTIVE)
+  allBranches    Boolean          @default(false)
+  invitedAt      DateTime         @default(now()) @db.Timestamptz(3)
+  joinedAt       DateTime?        @db.Timestamptz(3)
+
+  branches MembershipBranch[]
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@map("memberships")
+}
+
+model MembershipBranch {
+  membershipId String
+  membership   Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  branchId     String
+  branch       Branch     @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@id([membershipId, branchId])
+  @@map("membership_branches")
+}
+
+// ---------------------------------------------------------------------------
+// RBAC: Role and Permission are real records, not string literals in code.
+// Permission is a global, code-seeded catalog shared by every organization;
+// Role is per-organization so owners can add custom roles later.
+// ---------------------------------------------------------------------------
+
+model Permission {
+  id          String @id @default(cuid())
+  // Dot-namespaced key, e.g. "customers.view", "invoices.cancel".
+  key         String @unique
+  description String
+  category    String
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model Role {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // Slug unique within the org, e.g. "owner", "manager", "employee", or a
+  // custom slug the owner picks for a custom role.
+  key            String
+  name           String
+  // System roles (Owner/Manager/Employee) are seeded on org creation and
+  // cannot be deleted, only have their permissions adjusted.
+  isSystem       Boolean      @default(false)
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
+
+  permissions RolePermission[]
+  memberships Membership[]
+
+  @@unique([organizationId, key])
+  @@index([organizationId])
+  @@map("roles")
+}
+
+model RolePermission {
+  roleId       String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+// ---------------------------------------------------------------------------
+// Audit log
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id             String        @id @default(cuid())
+  // Null for pre-org events (e.g. OTP requested before signup).
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actorUserId    String?
+  actorUser      User?         @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  // Namespaced action key, e.g. "auth.otp_verified", "employee.role_changed".
+  action         String
+  targetType     String?
+  targetId       String?
+  // Never store secrets or OTP codes here.
+  metadata       Json?
+  ip             String?
+  createdAt      DateTime      @default(now()) @db.Timestamptz(3)
+
+  @@index([organizationId, createdAt])
+  @@index([actorUserId])
+  @@map("audit_logs")
+}
