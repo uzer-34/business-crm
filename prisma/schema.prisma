@@ -24,9 +24,13 @@ model User {
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
-  memberships Membership[]
-  sessions    Session[]
-  auditLogs   AuditLog[]
+  memberships      Membership[]
+  sessions         Session[]
+  auditLogs        AuditLog[]
+  createdCustomers Customer[]
+  notes            Note[]
+  createdTasks     Task[]
+  activities       Activity[]
 
   @@map("users")
 }
@@ -100,6 +104,10 @@ model Organization {
   memberships Membership[]
   roles       Role[]
   auditLogs   AuditLog[]
+  customers   Customer[]
+  notes       Note[]
+  tasks       Task[]
+  activities  Activity[]
 
   @@map("organizations")
 }
@@ -123,6 +131,7 @@ model Branch {
   updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
 
   membershipBranches MembershipBranch[]
+  customers          Customer[]
 
   @@index([organizationId])
   @@map("branches")
@@ -152,7 +161,9 @@ model Membership {
   invitedAt      DateTime         @default(now()) @db.Timestamptz(3)
   joinedAt       DateTime?        @db.Timestamptz(3)
 
-  branches MembershipBranch[]
+  branches          MembershipBranch[]
+  assignedCustomers Customer[]
+  assignedTasks     Task[]
 
   @@unique([userId, organizationId])
   @@index([organizationId])
@@ -222,6 +233,129 @@ model RolePermission {
 // ---------------------------------------------------------------------------
 // Audit log
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Customer 360 (brief section 17-18). Customer holds only generic fields —
+// industry-specific data (vehicle info, garment size, ...) belongs in future
+// per-industry modules, not here. Activity is the user-facing business
+// timeline shown on a customer's page; it is intentionally separate from
+// AuditLog, which is the security/compliance trail and never rendered there.
+// ---------------------------------------------------------------------------
+
+enum CustomerType {
+  INDIVIDUAL
+  BUSINESS
+}
+
+enum CustomerStatus {
+  LEAD
+  ACTIVE
+  INACTIVE
+}
+
+model Customer {
+  id              String         @id @default(cuid())
+  organizationId  String
+  organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branchId        String?
+  branch          Branch?        @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  type            CustomerType   @default(INDIVIDUAL)
+  name            String
+  companyName     String?
+  email           String?
+  phone           String?
+  alternatePhone  String?
+  addressLine1    String?
+  addressLine2    String?
+  city            String?
+  region          String?
+  postalCode      String?
+  countryCode     String?
+  status          CustomerStatus @default(LEAD)
+  source          String?
+  tags            String[]       @default([])
+  assignedToId    String?
+  assignedTo      Membership?    @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdByUserId String
+  createdBy       User           @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdAt       DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime       @updatedAt @db.Timestamptz(3)
+  archivedAt      DateTime?      @db.Timestamptz(3)
+
+  notes      Note[]
+  tasks      Task[]
+  activities Activity[]
+
+  @@index([organizationId, archivedAt])
+  @@index([assignedToId])
+  @@map("customers")
+}
+
+model Note {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customerId     String
+  customer       Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  authorUserId   String
+  author         User         @relation(fields: [authorUserId], references: [id], onDelete: Restrict)
+  body           String
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+
+  @@index([customerId, createdAt])
+  @@map("notes")
+}
+
+enum TaskStatus {
+  OPEN
+  DONE
+}
+
+model Task {
+  id              String       @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customerId      String?
+  customer        Customer?    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  title           String
+  dueAt           DateTime?    @db.Timestamptz(3)
+  status          TaskStatus   @default(OPEN)
+  assignedToId    String?
+  assignedTo      Membership?  @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdByUserId String
+  createdBy       User         @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdAt       DateTime     @default(now()) @db.Timestamptz(3)
+  completedAt     DateTime?    @db.Timestamptz(3)
+
+  @@index([organizationId, status, dueAt])
+  @@index([assignedToId, status])
+  @@map("tasks")
+}
+
+// Namespaced, subject-polymorphic so new modules can append events without a
+// schema change: subjectType/subjectId identify what the event is about
+// (e.g. "Customer"/<id>), type is a dot-namespaced action key.
+model Activity {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  subjectType    String
+  subjectId      String
+  type           String
+  actorUserId    String?
+  actor          User?        @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  metadata       Json?
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+
+  // Only populated when subjectType = "Customer"; keeps a real FK (and
+  // cascade delete) for the common case while subjectType/subjectId stays
+  // the generic lookup path for every subject type.
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, subjectType, subjectId, createdAt])
+  @@map("activities")
+}
 
 model AuditLog {
   id             String        @id @default(cuid())
