@@ -35,6 +35,16 @@ export const PERMISSION_CATALOG = [
   { key: "inventory.adjust", category: "Inventory", description: "Record opening stock, adjustments, and damaged write-offs" },
   { key: "inventory.transfer", category: "Inventory", description: "Transfer stock between branches" },
 
+  // Suppliers & Purchasing
+  { key: "suppliers.view", category: "Purchasing", description: "View suppliers" },
+  { key: "suppliers.create", category: "Purchasing", description: "Create suppliers" },
+  { key: "suppliers.edit", category: "Purchasing", description: "Edit suppliers" },
+  { key: "suppliers.archive", category: "Purchasing", description: "Archive suppliers" },
+  { key: "purchases.view", category: "Purchasing", description: "View purchase orders" },
+  { key: "purchases.create", category: "Purchasing", description: "Create purchase orders" },
+  { key: "purchases.receive", category: "Purchasing", description: "Receive purchase order items and record payments" },
+  { key: "purchases.cancel", category: "Purchasing", description: "Cancel purchase orders" },
+
   // Reports
   { key: "reports.sales", category: "Reports", description: "View sales reports" },
   { key: "reports.financial", category: "Reports", description: "View financial reports" },
@@ -69,6 +79,12 @@ export const SYSTEM_ROLES = [
       "inventory.view",
       "inventory.adjust",
       "inventory.transfer",
+      "suppliers.view",
+      "suppliers.create",
+      "suppliers.edit",
+      "purchases.view",
+      "purchases.create",
+      "purchases.receive",
       "reports.sales",
       "reports.financial",
     ] as PermissionKey[],
@@ -84,6 +100,8 @@ export const SYSTEM_ROLES = [
       "products.view",
       "services.view",
       "inventory.view",
+      "suppliers.view",
+      "purchases.view",
     ] as PermissionKey[],
   },
 ] as const;

@@ -242,6 +242,48 @@ formula in §21:
   mapping to a plain `{id, name, sku, variants}` shape before passing
   across the boundary (`productOptions` in `inventory/page.tsx`).
 
+## Purchasing (Phase 5)
+
+Supplier -> PurchaseOrder -> receiving -> Inventory -> supplier balance
+(brief §22), built directly on top of Phase 4's ledger rather than beside it:
+
+- **Supplier** is a plain org-scoped contact record. `Product.preferredSupplierId`
+  (optional) is a convenience default for PO line items, not a constraint —
+  a PO can still order any product from any supplier.
+- **PurchaseOrder** gets an org-scoped sequential number (`PO-0001`, ...)
+  minted from `Organization.poSequence`, atomically incremented inside the
+  creation transaction (`{ poSequence: { increment: 1 } }`), so concurrent
+  POs from the same org can't collide — Postgres serializes the row update.
+- **No DRAFT/approval workflow.** A PO is live the moment it's created;
+  brief §43 phases an approval-style flow into Phase 11's Automobile
+  Workshop module specifically, not the generic core, so building one here
+  would be exactly the kind of over-scoping §45 warns against.
+- **Receiving has no separate "GoodsReceipt" header.** `InventoryMovement`
+  already *is* the receipt record: `receivePurchaseOrderItemAction` calls
+  the same `applyStockMovement()` from Phase 4 with `type: "PURCHASE"` and
+  the real `purchaseOrderItemId` FK (upgraded from Phase 4's free-text
+  `reference`, now that a real table exists to point to). A parallel
+  "receipt" ledger would just be the same fact recorded twice. Partial
+  receiving is supported — `quantityReceived` is cumulative, and the PO's
+  own `status` (ORDERED -> PARTIALLY_RECEIVED -> RECEIVED) is recomputed
+  from all its items after each receipt.
+- **Payment status is a running total, not a ledger.** `amountPaid` +
+  `paymentStatus` on the PO itself — deliberately not a full Payment model
+  with methods/history (that's Phase 7). Overpayment is rejected
+  server-side against the outstanding balance.
+- Money math for PO totals uses `Prisma.Decimal` arithmetic
+  (`new Prisma.Decimal(unitCost).times(qty)`, chained `.plus()`), not raw
+  JS floats — avoids floating-point drift when summing many line items,
+  same reasoning as why every price column is `Decimal` rather than `Float`.
+- Same branch-scoping discipline as Phase 4: creating a PO checks
+  `assertBranchAccess` for its branch, and receiving checks it again
+  against the PO's own branch (never a client-supplied one).
+- This phase's own line-item creation form doubles as a regression check
+  for the Phase 4 client/server boundary lesson: `products`/`suppliers`
+  passed into `NewPurchaseOrderForm` are pre-mapped to plain
+  `{id, name, sku, variants}` shapes, never raw Prisma records with
+  `Decimal` fields.
+
 ## Motion (hover + scroll)
 
 GSAP (`gsap`, `@gsap/react`) provides the product's hover and scroll
@@ -318,6 +360,17 @@ code that doesn't match `src/lib/db.ts`.
 - First real use of `assertBranchAccess()` from Phase 1 — closes that gap
 - Dashboard gained a real "Low stock" section next to the tasks one
 
+**Phase 5 — Suppliers & Purchasing**
+- Supplier list + create
+- Purchase order creation (dedicated page, dynamic line items) with an
+  org-scoped sequential order number
+- Receiving (partial or full) that creates real `PURCHASE` movements —
+  the first thing to use the movement types Phase 4 reserved for this
+- Payment status tracking (running total, not a full ledger)
+- `InventoryMovement.purchaseOrderItemId` real FK, upgraded from Phase 4's
+  free-text `reference` now that a real table exists to point to
+- `Product.preferredSupplierId` — closes a gap flagged since Phase 3
+
 ## Known gaps / deliberately not built yet
 
 - No organization switcher — a user with multiple orgs always lands on the
@@ -336,12 +389,16 @@ code that doesn't match `src/lib/db.ts`.
 - ProductVariant exists and inventory can track stock per variant, but
   nothing consumes variants yet beyond that — Phase 6 (Sales) is what will
   actually sell against them
-- `PURCHASE`/`SALE`/`RETURN` exist as `InventoryMovementType` values but
-  nothing creates them yet — Phase 5 (Purchasing) and Phase 6 (Sales) will
+- `SALE`/`RETURN` exist as `InventoryMovementType` values but nothing
+  creates them yet — Phase 6 (Sales) will
 - No per-product movement history page — the inventory page shows the last
   20 movements for the whole branch, not filtered per product
-- Suppliers, Sales, Invoices, Payments, Expenses, Industry Engine, AI —
-  all later phases per the roadmap, not started
+- No PO edit/cancel UI yet (`purchases.cancel` permission exists, unused);
+  no supplier edit/archive UI (create-only, matching every other module)
+- No supplier balance report — the outstanding-per-PO figure exists, but
+  nothing rolls it up across all of a supplier's purchase orders yet
+- Sales, Invoices, Payments, Expenses, Industry Engine, AI — all later
+  phases per the roadmap, not started
 - Rate limiting is DB-query based, not a dedicated store; fine for now, but
   the first thing to revisit if abuse patterns show up in production traffic
 

@@ -10,9 +10,11 @@ import { createProductAction } from "@/lib/catalog/product-actions";
 export function NewProductForm({
   organizationId,
   categoryNames,
+  suppliers,
 }: {
   organizationId: string;
   categoryNames: string[];
+  suppliers: { id: string; name: string }[];
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -22,6 +24,7 @@ export function NewProductForm({
   const [costPrice, setCostPrice] = useState("");
   const [sellingPrice, setSellingPrice] = useState("");
   const [reorderPoint, setReorderPoint] = useState("");
+  const [preferredSupplierId, setPreferredSupplierId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -44,6 +47,7 @@ export function NewProductForm({
               costPrice,
               sellingPrice,
               reorderPoint: reorderPoint || undefined,
+              preferredSupplierId: preferredSupplierId || undefined,
             });
             if (!result.ok) {
               setError(result.error);
@@ -117,6 +121,24 @@ export function NewProductForm({
             placeholder="Get a low-stock alert at or below this quantity"
           />
         </div>
+        {suppliers.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="product-supplier">Preferred supplier (optional)</Label>
+            <select
+              id="product-supplier"
+              value={preferredSupplierId}
+              onChange={(e) => setPreferredSupplierId(e.target.value)}
+              className="h-10 rounded-md border border-border bg-card px-3 text-sm"
+            >
+              <option value="">None</option>
+              {suppliers.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {error && <p className="text-sm text-danger">{error}</p>}
 

@@ -34,6 +34,13 @@ export async function createProductAction(
   });
   if (existingSku) return { ok: false, error: "A product with this SKU already exists" };
 
+  if (parsed.data.preferredSupplierId) {
+    const supplier = await db.supplier.findFirst({
+      where: { id: parsed.data.preferredSupplierId, organizationId: ctx.organizationId },
+    });
+    if (!supplier) return { ok: false, error: "Preferred supplier not found" };
+  }
+
   try {
     const product = await db.$transaction(async (tx) => {
       const { categoryName, ...rest } = parsed.data;

@@ -13,6 +13,7 @@ export const createProductSchema = z.object({
   taxRatePercent: z.coerce.number().min(0).max(100).default(0),
   reorderPoint: z.coerce.number().int().nonnegative().optional(),
   categoryName: z.string().trim().max(80).optional(),
+  preferredSupplierId: z.string().optional(),
 });
 
 export type CreateProductInput = z.infer<typeof createProductSchema>;

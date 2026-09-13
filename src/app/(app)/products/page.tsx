@@ -11,7 +11,7 @@ export default async function ProductsPage() {
   const { membership } = await getDefaultMembershipOrRedirect();
   const { organization } = membership;
 
-  const [products, categories] = await Promise.all([
+  const [products, categories, suppliers] = await Promise.all([
     db.product.findMany({
       where: { organizationId: organization.id, archivedAt: null },
       include: { category: true },
@@ -20,6 +20,10 @@ export default async function ProductsPage() {
     }),
     db.category.findMany({
       where: { organizationId: organization.id, kind: "PRODUCT", archivedAt: null },
+      orderBy: { name: "asc" },
+    }),
+    db.supplier.findMany({
+      where: { organizationId: organization.id, archivedAt: null },
       orderBy: { name: "asc" },
     }),
   ]);
@@ -31,7 +35,11 @@ export default async function ProductsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Products</h1>
           <p className="text-sm text-muted-foreground">{products.length} total</p>
         </div>
-        <NewProductForm organizationId={organization.id} categoryNames={categories.map((c) => c.name)} />
+        <NewProductForm
+          organizationId={organization.id}
+          categoryNames={categories.map((c) => c.name)}
+          suppliers={suppliers.map((s) => ({ id: s.id, name: s.name }))}
+        />
       </div>
 
       {products.length === 0 ? (
