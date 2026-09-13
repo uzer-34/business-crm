@@ -20,7 +20,7 @@ export default async function CustomerPage({ params }: PageProps<"/customers/[id
   const ctx = await loadTenantContext(user.id, customer.organizationId);
   if (!ctx) notFound();
 
-  const [notesRaw, tasksRaw, activitiesRaw, membersRaw, ordersRaw] = await Promise.all([
+  const [notesRaw, tasksRaw, activitiesRaw, membersRaw, ordersRaw, invoicesRaw] = await Promise.all([
     db.note.findMany({
       where: { customerId: id },
       include: { author: true },
@@ -42,6 +42,10 @@ export default async function CustomerPage({ params }: PageProps<"/customers/[id
       include: { user: true },
     }),
     db.order.findMany({
+      where: { customerId: id },
+      orderBy: { createdAt: "desc" },
+    }),
+    db.invoice.findMany({
       where: { customerId: id },
       orderBy: { createdAt: "desc" },
     }),
@@ -82,6 +86,14 @@ export default async function CustomerPage({ params }: PageProps<"/customers/[id
     total: o.total.toString(),
   }));
 
+  const invoices = invoicesRaw.map((inv) => ({
+    id: inv.id,
+    invoiceNumber: inv.invoiceNumber,
+    status: inv.status,
+    paymentStatus: inv.paymentStatus,
+    total: inv.total.toString(),
+  }));
+
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
       <Card>
@@ -106,6 +118,7 @@ export default async function CustomerPage({ params }: PageProps<"/customers/[id
         tasks={tasks}
         activities={activities}
         orders={orders}
+        invoices={invoices}
         currencyCode={customer.organization.currencyCode}
         locale={customer.organization.locale}
         canAssign={ctx.permissions.has("customers.assign")}

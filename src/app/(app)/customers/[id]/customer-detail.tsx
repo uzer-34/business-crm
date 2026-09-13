@@ -22,8 +22,9 @@ type Task = {
 };
 type ActivityItem = { id: string; type: string; createdAt: string; actorName: string | null; summary: string };
 type OrderSummary = { id: string; orderNumber: string; status: string; total: string };
+type InvoiceSummary = { id: string; invoiceNumber: string; status: string; paymentStatus: string; total: string };
 
-const TABS = ["Overview", "Activity", "Notes", "Tasks", "Orders"] as const;
+const TABS = ["Overview", "Activity", "Notes", "Tasks", "Orders", "Invoices"] as const;
 type Tab = (typeof TABS)[number];
 
 export function CustomerDetail({
@@ -34,6 +35,7 @@ export function CustomerDetail({
   tasks,
   activities,
   orders,
+  invoices,
   currencyCode,
   locale,
   canAssign,
@@ -46,6 +48,7 @@ export function CustomerDetail({
   tasks: Task[];
   activities: ActivityItem[];
   orders: OrderSummary[];
+  invoices: InvoiceSummary[];
   currencyCode: string;
   locale: string;
   canAssign: boolean;
@@ -112,7 +115,43 @@ export function CustomerDetail({
       {tab === "Orders" && (
         <OrdersTab customerId={customerId} orders={orders} currencyCode={currencyCode} locale={locale} />
       )}
+
+      {tab === "Invoices" && <InvoicesTab invoices={invoices} currencyCode={currencyCode} locale={locale} />}
     </div>
+  );
+}
+
+function InvoicesTab({
+  invoices,
+  currencyCode,
+  locale,
+}: {
+  invoices: InvoiceSummary[];
+  currencyCode: string;
+  locale: string;
+}) {
+  const formatter = new Intl.NumberFormat(locale, { style: "currency", currency: currencyCode });
+
+  if (invoices.length === 0) {
+    return <p className="text-sm text-muted-foreground">No invoices yet — generate one from an order.</p>;
+  }
+
+  return (
+    <RevealOnScroll className="flex flex-col gap-2">
+      {invoices.map((invoice) => (
+        <Link key={invoice.id} href={`/invoices/${invoice.id}`}>
+          <Card>
+            <CardContent className="flex items-center justify-between p-3">
+              <span className="text-sm font-medium">{invoice.invoiceNumber}</span>
+              <span className="text-sm text-muted-foreground">
+                {invoice.status === "VOID" ? "Void" : invoice.paymentStatus.replace("_", " ").toLowerCase()} ·{" "}
+                {formatter.format(Number(invoice.total))}
+              </span>
+            </CardContent>
+          </Card>
+        </Link>
+      ))}
+    </RevealOnScroll>
   );
 }
 

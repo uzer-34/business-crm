@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import Link from "next/link";
 import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { getCurrentUser } from "@/lib/auth/session";
@@ -7,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatMoney } from "@/lib/format";
 import { FulfillItemForm } from "./fulfill-item-form";
 import { OrderPaymentForm } from "./order-payment-form";
+import { GenerateInvoiceButton } from "./generate-invoice-button";
 
 const STATUS_LABEL: Record<string, string> = {
   PENDING: "Pending",
@@ -34,6 +36,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
       branch: true,
       organization: true,
       items: { include: { product: true, variant: true, service: true } },
+      invoices: { orderBy: { createdAt: "desc" }, take: 1 },
     },
   });
   if (!order) notFound();
@@ -44,6 +47,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
   const { organization } = order;
   const canFulfill = ctx.permissions.has("sales.fulfill") && order.status !== "CANCELLED";
   const outstanding = new Prisma.Decimal(order.total).minus(order.amountPaid);
+  const existingInvoice = order.invoices[0];
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
@@ -125,6 +129,21 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
           )}
         </CardContent>
       </Card>
+
+      {order.status !== "CANCELLED" && (
+        <div className="flex justify-end">
+          {existingInvoice ? (
+            <Link
+              href={`/invoices/${existingInvoice.id}`}
+              className="inline-flex h-9 items-center justify-center rounded-md border border-border px-3 text-sm font-medium hover:bg-accent"
+            >
+              View invoice {existingInvoice.invoiceNumber}
+            </Link>
+          ) : (
+            ctx.permissions.has("invoices.create") && <GenerateInvoiceButton orderId={order.id} />
+          )}
+        </div>
+      )}
     </div>
   );
 }

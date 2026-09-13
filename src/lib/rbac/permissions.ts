@@ -51,6 +51,12 @@ export const PERMISSION_CATALOG = [
   { key: "sales.fulfill", category: "Sales", description: "Fulfill order items and record payments" },
   { key: "sales.cancel", category: "Sales", description: "Cancel orders" },
 
+  // Invoices & Payments
+  { key: "invoices.view", category: "Invoicing", description: "View invoices and payment history" },
+  { key: "invoices.create", category: "Invoicing", description: "Generate invoices from orders" },
+  { key: "invoices.void", category: "Invoicing", description: "Void invoices" },
+  { key: "payments.record", category: "Invoicing", description: "Record payments against invoices" },
+
   // Reports
   { key: "reports.sales", category: "Reports", description: "View sales reports" },
   { key: "reports.financial", category: "Reports", description: "View financial reports" },
@@ -95,6 +101,10 @@ export const SYSTEM_ROLES = [
       "sales.create",
       "sales.fulfill",
       "sales.cancel",
+      "invoices.view",
+      "invoices.create",
+      "invoices.void",
+      "payments.record",
       "reports.sales",
       "reports.financial",
     ] as PermissionKey[],
@@ -114,10 +124,15 @@ export const SYSTEM_ROLES = [
       "purchases.view",
       // Unlike purchasing receipt (back-office), processing a sale is
       // frontline checkout work — employees need to create and fulfill
-      // orders day-to-day, not just view them.
+      // orders day-to-day, not just view them. Same reasoning extends to
+      // invoicing/payments: a cashier prints the receipt and takes the
+      // payment, but voiding an issued invoice is a back-office correction.
       "sales.view",
       "sales.create",
       "sales.fulfill",
+      "invoices.view",
+      "invoices.create",
+      "payments.record",
     ] as PermissionKey[],
   },
 ] as const;

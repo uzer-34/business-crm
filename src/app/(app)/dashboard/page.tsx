@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
+import { Prisma } from "@/generated/prisma/client";
 import { getDefaultMembershipOrRedirect } from "@/lib/organization/actions";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { StaggerIn } from "@/components/motion/stagger-in";
 import { HoverLift } from "@/components/motion/hover-lift";
 import { RevealOnScroll } from "@/components/motion/reveal-on-scroll";
+import { formatMoney } from "@/lib/format";
 
 // Kept outside the component: the React Compiler's purity rule flags
 // impure calls (Date.now/new Date) made directly inside a component body.
@@ -42,17 +44,32 @@ async function loadLowStock(organizationId: string) {
     .slice(0, 5);
 }
 
+async function loadOutstandingInvoices(organizationId: string) {
+  return db.invoice.findMany({
+    where: {
+      organizationId,
+      status: "ISSUED",
+      paymentStatus: { in: ["UNPAID", "PARTIALLY_PAID"] },
+    },
+    include: { customer: true },
+    orderBy: { issuedAt: "asc" },
+    take: 5,
+  });
+}
+
 export default async function DashboardPage() {
   const { membership } = await getDefaultMembershipOrRedirect();
 
-  const [branchCount, employeeCount, customerCount, productCount, attentionTasks, lowStock] = await Promise.all([
-    db.branch.count({ where: { organizationId: membership.organizationId, archivedAt: null } }),
-    db.membership.count({ where: { organizationId: membership.organizationId, status: "ACTIVE" } }),
-    db.customer.count({ where: { organizationId: membership.organizationId, archivedAt: null } }),
-    db.product.count({ where: { organizationId: membership.organizationId, archivedAt: null } }),
-    loadAttentionTasks(membership.organizationId),
-    loadLowStock(membership.organizationId),
-  ]);
+  const [branchCount, employeeCount, customerCount, productCount, attentionTasks, lowStock, outstandingInvoices] =
+    await Promise.all([
+      db.branch.count({ where: { organizationId: membership.organizationId, archivedAt: null } }),
+      db.membership.count({ where: { organizationId: membership.organizationId, status: "ACTIVE" } }),
+      db.customer.count({ where: { organizationId: membership.organizationId, archivedAt: null } }),
+      db.product.count({ where: { organizationId: membership.organizationId, archivedAt: null } }),
+      loadAttentionTasks(membership.organizationId),
+      loadLowStock(membership.organizationId),
+      loadOutstandingInvoices(membership.organizationId),
+    ]);
 
   const stats = [
     { label: "Customers", value: customerCount },
@@ -141,6 +158,37 @@ export default async function DashboardPage() {
                   </span>
                 </Link>
               ))}
+            </RevealOnScroll>
+          </CardContent>
+        </Card>
+      )}
+
+      {outstandingInvoices.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Outstanding invoices</CardTitle>
+            <CardDescription>Unpaid or partially paid, oldest first.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <RevealOnScroll className="flex flex-col gap-2">
+              {outstandingInvoices.map((invoice) => {
+                const outstanding = new Prisma.Decimal(invoice.total).minus(invoice.amountPaid);
+                return (
+                  <Link
+                    key={invoice.id}
+                    href={`/invoices/${invoice.id}`}
+                    className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm hover:bg-accent"
+                  >
+                    <span>
+                      {invoice.invoiceNumber}
+                      {invoice.customer && <span className="text-muted-foreground"> — {invoice.customer.name}</span>}
+                    </span>
+                    <span className="text-danger">
+                      {formatMoney(outstanding.toString(), membership.organization.currencyCode, membership.organization.locale)}
+                    </span>
+                  </Link>
+                );
+              })}
             </RevealOnScroll>
           </CardContent>
         </Card>

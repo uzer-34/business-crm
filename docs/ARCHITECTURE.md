@@ -341,6 +341,66 @@ deliberately mirroring Purchasing's lifecycle shape:
   purchase order is comparatively rare back-office work. Same reasoning
   that already put `customers.create`/`edit` in the Employee role.
 
+## Invoicing & Payments (Phase 7)
+
+Order -> Invoice -> Payments (brief §24), the first phase to introduce a
+real append-only financial ledger rather than a running-total field:
+
+- **Invoice is derived from an Order, 1:1, not built independently.**
+  `createInvoiceFromOrderAction` copies `subtotal`/`discountTotal`/`taxTotal`/
+  `total` straight from the order and snapshots each line as a plain-text
+  `InvoiceItem.description` (`"T-Shirt (TSH-001)"` or the service name) —
+  an invoice is a financial record that must stay historically accurate
+  even if the underlying Product/Service is later renamed or deleted, so
+  `InvoiceItem` intentionally has no FK back to the catalog. Partial-order
+  invoicing (invoicing only some lines of an order) is not built — out of
+  scope until a real need for split invoices shows up.
+- **`Payment` is a real ledger this time**, not another running total —
+  append-only rows (`amount`, `method`, optional `reference`,
+  `recordedByUserId`) — with `Invoice.amountPaid`/`paymentStatus` kept as a
+  transactionally-updated cached projection, same
+  ledger-plus-projection shape Phase 4 established for `InventoryMovement`
+  → `StockLevel`. Verified directly in Postgres after a two-payment test
+  (CASH then BANK_TRANSFER against one invoice): `SUM(payments.amount)`
+  for the invoice matched `invoices.amountPaid` exactly, and
+  `paymentStatus` moved UNPAID → PARTIALLY_PAID → PAID at the right
+  thresholds.
+- **Overpayment is rejected** — `recordInvoicePaymentAction` validates
+  `amount <= outstanding` before inserting the ledger row, inside the same
+  transaction that updates the cached total.
+- **Voiding is blocked once money has moved**:
+  `voidInvoiceAction` refuses to void an invoice with `amountPaid > 0`
+  ("Cannot void an invoice with recorded payments") — verified in a real
+  browser: recording a payment against an issued invoice and then clicking
+  Void left the invoice unchanged with that exact error shown, rather than
+  silently voiding a paid invoice.
+- **`invoices.void` is deliberately excluded from the Employee system
+  role** (manager+ only), same reasoning as `sales.cancel`/
+  `purchases.cancel`: a cashier prints the receipt and takes the payment,
+  but voiding an issued invoice is a back-office correction. Verified at
+  the permission-catalog level (Employee's `SYSTEM_ROLES` entry has
+  `invoices.view`/`invoices.create`/`payments.record` but not
+  `invoices.void`) and via the UI's own permission gate
+  (`canVoid = ctx.permissions.has("invoices.void")`); a live cross-role
+  browser test isn't possible yet since there's still no employee
+  invitation flow (see "Known gaps") to create a second, lower-privileged
+  membership to test against.
+- **Print view lives in its own route group** — `src/app/(print)/invoices/
+  [id]/print/` is a sibling of `(app)/invoices/[id]/`, not nested under it,
+  so it only inherits the root layout (fonts/globals) and not `(app)`'s
+  sidebar/nav chrome, while still going through the same auth check in
+  `src/proxy.ts` (path-based, not layout-based — an unauthenticated
+  request to a print URL still redirects to `/login`, verified directly).
+  Line amounts on the print view are computed with `Prisma.Decimal`, not
+  raw JS floats, matching the money-math discipline used everywhere else.
+- Dashboard gained a real **Outstanding invoices** section (oldest unpaid/
+  partially-paid first) next to Low Stock and Needs Attention.
+- Customer 360 gained a real **Invoices tab** — closes a gap flagged since
+  Phase 6 added the Orders tab.
+- Order detail page now shows either a "Generate invoice" button
+  (`invoices.create` permission) or a link to the invoice that already
+  exists for it — an order can only ever have one invoice in this phase.
+
 ## Motion (hover + scroll)
 
 GSAP (`gsap`, `@gsap/react`) provides the product's hover and scroll
@@ -439,6 +499,19 @@ code that doesn't match `src/lib/db.ts`.
 - Customer 360 gained a real Orders tab — closes a gap flagged since Phase 2
 - Order creation logs to the customer's own activity timeline
 
+**Phase 7 — Invoicing & Payments**
+- Invoice generation from a fulfilled order (1:1, org-scoped sequential
+  invoice number), with line items snapshotted as plain text so they stay
+  accurate if the catalog changes later
+- Real append-only `Payment` ledger (method, optional reference, recorded
+  by) with `Invoice.amountPaid`/`paymentStatus` as a transactionally-kept
+  cached projection — verified against the raw ledger sum in Postgres
+- Overpayment rejected; voiding rejected once any payment is recorded
+- Print-friendly invoice view in its own route group (no sidebar chrome),
+  still behind the same auth check as every other page
+- Dashboard gained a real Outstanding invoices section; Customer 360
+  gained a real Invoices tab — closes a gap flagged since Phase 6
+
 ## Known gaps / deliberately not built yet
 
 - No organization switcher — a user with multiple orgs always lands on the
@@ -464,8 +537,14 @@ code that doesn't match `src/lib/db.ts`.
   it yet; no order edit/cancel UI (`sales.cancel` permission exists, unused)
 - No order-level discount, only per-line — fine for now, revisit if a
   storewide/cart-level discount becomes a real requirement
-- Invoices, Payments (the full ledger), Expenses, Industry Engine, AI —
-  all later phases per the roadmap, not started
+- No partial-order invoicing — an invoice always covers a whole order;
+  revisit if a real need for split invoices shows up
+- No invoice edit UI (create/void/pay only); no credit note / refund flow
+- `invoices.void` cross-role enforcement is verified at the permission
+  catalog and UI-gate level only — a live two-membership browser test
+  needs the employee invitation flow (still not built, see above)
+- Expenses, the Industry Engine, AI Business Intelligence — later phases
+  per the roadmap, not started
 - Rate limiting is DB-query based, not a dedicated store; fine for now, but
   the first thing to revisit if abuse patterns show up in production traffic
 

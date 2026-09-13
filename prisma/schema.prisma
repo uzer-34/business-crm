@@ -37,6 +37,8 @@ model User {
   createdSuppliers      Supplier[]
   createdPurchaseOrders PurchaseOrder[]
   createdOrders         Order[]
+  createdInvoices       Invoice[]
+  recordedPayments      Payment[]
 
   @@map("users")
 }
@@ -88,28 +90,30 @@ model Session {
 // ---------------------------------------------------------------------------
 
 model Organization {
-  id            String   @id @default(cuid())
-  name          String
-  legalName     String?
+  id              String   @id @default(cuid())
+  name            String
+  legalName       String?
   // ISO 3166-1 alpha-2 (e.g. "US", "IN", "AE").
-  countryCode   String
+  countryCode     String
   // ISO 4217 (e.g. "USD", "INR", "AED").
-  currencyCode  String
+  currencyCode    String
   // IANA timezone identifier (e.g. "America/New_York", "Asia/Kolkata").
-  timezone      String
+  timezone        String
   // BCP-47 locale (e.g. "en-US", "en-IN").
-  locale        String
+  locale          String
   // Industry key resolved against the code-level industry registry
   // (src/lib/industry/registry.ts). Free-form on purpose: the Industry
   // Engine (Phase 10) will move this to a richer, still additive, model.
-  industryKey   String   @default("generic")
+  industryKey     String   @default("generic")
   // Atomically incremented to mint each org's own PO-0001, PO-0002, ...
   // sequence — see createPurchaseOrderForOrganization().
-  poSequence    Int      @default(0)
+  poSequence      Int      @default(0)
   // Same pattern as poSequence, for Order's SO-0001, SO-0002, ... numbers.
-  orderSequence Int      @default(0)
-  createdAt     DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt     DateTime @updatedAt @db.Timestamptz(3)
+  orderSequence   Int      @default(0)
+  // Same pattern again, for Invoice's INV-0001, INV-0002, ... numbers.
+  invoiceSequence Int      @default(0)
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
 
   branches           Branch[]
   memberships        Membership[]
@@ -127,6 +131,8 @@ model Organization {
   suppliers          Supplier[]
   purchaseOrders     PurchaseOrder[]
   orders             Order[]
+  invoices           Invoice[]
+  payments           Payment[]
 
   @@map("organizations")
 }
@@ -155,6 +161,7 @@ model Branch {
   stockLevels        StockLevel[]
   purchaseOrders     PurchaseOrder[]
   orders             Order[]
+  invoices           Invoice[]
 
   @@index([organizationId])
   @@map("branches")
@@ -310,6 +317,7 @@ model Customer {
   tasks      Task[]
   activities Activity[]
   orders     Order[]
+  invoices   Invoice[]
 
   @@index([organizationId, archivedAt])
   @@index([assignedToId])
@@ -744,7 +752,8 @@ model Order {
   createdAt       DateTime      @default(now()) @db.Timestamptz(3)
   updatedAt       DateTime      @updatedAt @db.Timestamptz(3)
 
-  items OrderItem[]
+  items    OrderItem[]
+  invoices Invoice[]
 
   @@unique([organizationId, orderNumber])
   @@index([organizationId, status])
@@ -778,6 +787,112 @@ model OrderItem {
   inventoryMovements InventoryMovement[]
 
   @@map("order_items")
+}
+
+// ---------------------------------------------------------------------------
+// Invoices & Payments (brief §24-25). Invoice -> InvoiceItem -> Payment is
+// the same ledger-plus-projection shape as InventoryMovement -> StockLevel
+// in Phase 4: Payment is the append-only source of truth (never edited or
+// deleted — "financial records must be auditable"), and
+// Invoice.amountPaid/paymentStatus are a cached projection kept in sync
+// transactionally with every Payment insert.
+//
+// An Invoice always derives from an existing Order (brief's own flow is
+// Order -> Invoice -> Payment) rather than accepting free-form line items
+// directly — standalone invoicing without a prior Order is a real gap,
+// documented rather than half-built.
+//
+// InvoiceItem stores a plain text description instead of a Product/Service
+// FK: an invoice is a financial record that must stay historically accurate
+// even if the product is later renamed, re-priced, or deleted, and brief
+// §24 explicitly lists "labour" alongside products/services -- a free-form
+// line that was never a catalog item to begin with.
+// ---------------------------------------------------------------------------
+
+enum InvoiceStatus {
+  ISSUED
+  VOID
+}
+
+model Invoice {
+  id              String        @id @default(cuid())
+  organizationId  String
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  orderId         String
+  order           Order         @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  // Denormalized from the order at generation time: an invoice must remain
+  // a stable financial record even if the order's customer link changes.
+  customerId      String?
+  customer        Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  branchId        String
+  branch          Branch        @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  invoiceNumber   String
+  status          InvoiceStatus @default(ISSUED)
+  paymentStatus   PaymentStatus @default(UNPAID)
+  subtotal        Decimal       @db.Decimal(12, 2)
+  discountTotal   Decimal       @default(0) @db.Decimal(12, 2)
+  taxTotal        Decimal       @db.Decimal(12, 2)
+  total           Decimal       @db.Decimal(12, 2)
+  // Cached sum of this invoice's Payment rows — see the block comment above.
+  amountPaid      Decimal       @default(0) @db.Decimal(12, 2)
+  notes           String?
+  issuedAt        DateTime      @default(now()) @db.Timestamptz(3)
+  voidedAt        DateTime?     @db.Timestamptz(3)
+  createdByUserId String
+  createdBy       User          @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdAt       DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime      @updatedAt @db.Timestamptz(3)
+
+  items    InvoiceItem[]
+  payments Payment[]
+
+  @@unique([organizationId, invoiceNumber])
+  @@index([organizationId, status])
+  @@index([customerId])
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id              String  @id @default(cuid())
+  invoiceId       String
+  invoice         Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  description     String
+  quantity        Int
+  unitPrice       Decimal @db.Decimal(12, 2)
+  discountPercent Decimal @default(0) @db.Decimal(5, 2)
+  taxRatePercent  Decimal @default(0) @db.Decimal(5, 2)
+
+  @@map("invoice_items")
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  CARD
+  ONLINE
+  OTHER
+}
+
+// Append-only. Never updated or deleted after creation — a correction is a
+// new Payment (or a future refund/credit type), not an edit.
+model Payment {
+  id               String        @id @default(cuid())
+  organizationId   String
+  organization     Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoiceId        String
+  invoice          Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  amount           Decimal       @db.Decimal(12, 2)
+  method           PaymentMethod
+  // Free-form: a transaction ID, cheque number, or similar, depending on
+  // method — not validated against any payment gateway (brief §45: don't
+  // fake a real payment integration).
+  reference        String?
+  recordedByUserId String
+  recordedBy       User          @relation(fields: [recordedByUserId], references: [id], onDelete: Restrict)
+  createdAt        DateTime      @default(now()) @db.Timestamptz(3)
+
+  @@index([invoiceId, createdAt])
+  @@map("payments")
 }
 
 model AuditLog {
