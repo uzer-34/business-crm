@@ -49,6 +49,7 @@ export const PERMISSION_CATALOG = [
   { key: "sales.view", category: "Sales", description: "View orders" },
   { key: "sales.create", category: "Sales", description: "Create orders" },
   { key: "sales.fulfill", category: "Sales", description: "Fulfill order items and record payments" },
+  { key: "sales.return", category: "Sales", description: "Process returns and exchanges" },
   { key: "sales.cancel", category: "Sales", description: "Cancel orders" },
 
   // Invoices & Payments
@@ -117,6 +118,7 @@ export const SYSTEM_ROLES = [
       "sales.view",
       "sales.create",
       "sales.fulfill",
+      "sales.return",
       "sales.cancel",
       "invoices.view",
       "invoices.create",
@@ -157,6 +159,10 @@ export const SYSTEM_ROLES = [
       "sales.view",
       "sales.create",
       "sales.fulfill",
+      // A return or exchange happens at the counter same as the original
+      // sale — frontline, not a manager-only correction like cancelling
+      // the whole order.
+      "sales.return",
       "invoices.view",
       "invoices.create",
       "payments.record",

@@ -27,6 +27,13 @@ export const createVariantSchema = z.object({
   sellingPrice: z.coerce.number().nonnegative().optional(),
 });
 
+export const generateVariantMatrixSchema = z.object({
+  sizes: z.array(z.string().trim().min(1).max(40)).min(1, "Add at least one size"),
+  colors: z.array(z.string().trim().min(1).max(40)).min(1, "Add at least one color"),
+});
+
+export type GenerateVariantMatrixInput = z.infer<typeof generateVariantMatrixSchema>;
+
 export const createServiceSchema = z.object({
   name: z.string().trim().min(1).max(160),
   description: z.string().trim().max(2000).optional(),

@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { RevealOnScroll } from "@/components/motion/reveal-on-scroll";
 import { formatMoney } from "@/lib/format";
 import { AddVariantForm } from "./add-variant-form";
+import { VariantMatrixForm } from "./variant-matrix-form";
 
 export default async function ProductPage({ params }: PageProps<"/products/[id]">) {
   const { id } = await params;
@@ -50,7 +51,12 @@ export default async function ProductPage({ params }: PageProps<"/products/[id]"
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Variants</CardTitle>
-          {ctx.permissions.has("products.edit") && <AddVariantForm productId={product.id} />}
+          {ctx.permissions.has("products.edit") && (
+            <div className="flex gap-2">
+              <VariantMatrixForm productId={product.id} />
+              <AddVariantForm productId={product.id} />
+            </div>
+          )}
         </CardHeader>
         <CardContent>
           {product.variants.length === 0 ? (

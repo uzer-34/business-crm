@@ -647,6 +647,71 @@ half of the principle earns a genuine exception.
   the vehicle's own detail page listed that Job Card in its service
   history with the correct odometer reading.
 
+## Clothing / Retail (Phase 12)
+
+The second industry pack, and a lighter one than Phase 11 — clothing
+retail's core need (products with Size/Color combinations) was already
+served by Phase 3's `ProductVariant`, so this phase is about making that
+existing mechanism actually usable at retail scale, plus closing a gap
+that's been sitting in the schema since Phase 4.
+
+- **Bulk variant generator, not a new model.** Adding ten Size × Color
+  combinations one at a time through Phase 3's single `AddVariantForm`
+  doesn't scale to a real clothing catalog. `generateVariantMatrixAction`
+  takes a comma-separated size list and color list and creates every
+  combination in one call, deriving each SKU from the product's own SKU
+  (`TEE-S-RED`). It's additive, not destructive: re-running it after adding
+  a new size only creates what's missing — combinations whose derived SKU
+  already exists are silently skipped, not treated as an error, so an
+  owner can keep adding sizes/colors over time without tracking which
+  ones they already generated. Verified in a real browser: generating
+  S/M/L × Red/Blue created exactly 6 variants; immediately generating
+  S/XL × Red on the same product created only the new XL/Red combination
+  and reported the other as already existing, not a duplicate or a
+  failure.
+- **This is generic-core, not industry-gated**, unlike Phase 11's Vehicle
+  module. Any product with variants benefits from bulk generation — a
+  jeweller with ring sizes, an electronics store with storage-capacity
+  SKUs — so the "Generate variants" button lives next to the existing
+  one-at-a-time form for every industry, not just `clothing_retail`.
+  Clothing retail is simply the phase whose real need motivated building
+  it now.
+- **Returns/exchanges finally use the `RETURN` movement type** — a value
+  that's existed in `InventoryMovementType` since Phase 4 but nothing ever
+  created (flagged as a known gap in every phase since). `OrderItem`
+  gained `quantityReturned` (cumulative, always ≤ `quantityFulfilled`);
+  `processReturnAction` restocks inventory through the same
+  `applyStockMovement` ledger+projection helper every other movement uses,
+  for product lines only (a returned service line just increments
+  `quantityReturned` with no stock effect, mirroring how service
+  fulfillment already skips inventory). A return does **not** change
+  `Order.status` — the order genuinely was fulfilled; a post-fulfillment
+  return is a separate lifecycle event layered on top, not an
+  un-fulfillment.
+- **Deliberately does not touch money.** `processReturnAction` never
+  reverses `Order.amountPaid`, `Invoice`, or `Payment` state. A real refund
+  or exchange-credit flow is a genuine feature (a credit note, a cash
+  drawer transaction, store-credit issuance) that this phase intentionally
+  leaves as a manual follow-up rather than guessing at a refund policy no
+  one asked for — brief §46 says a feature isn't complete until
+  functionality *and* every other dimension is actually addressed, and
+  silently mutating payment state with no real refund flow behind it would
+  fail that bar, not meet it. Documented explicitly below rather than left
+  as a silent gap.
+- `sales.return` was added to the permission catalog (Manager and Employee
+  both get it — processing a return at the counter is frontline work, same
+  as the original sale; `sales.cancel` remains the only manager-only
+  action in this category).
+- Verified end-to-end in a real browser: stocked a generated variant,
+  created an order for 5 units, fulfilled all 5, processed a return of 2
+  (inventory correctly went 10 → 5 after fulfillment → 7 after the
+  return, and the order item showed "5 / 5 fulfilled · 2 returned" while
+  the order stayed FULFILLED), then confirmed the server rejects
+  returning more than what's still outstanding (3) even when the
+  browser's own `max` attribute on the quantity input is bypassed —
+  proving the real guard lives in `processReturnAction`, not just in the
+  form's UI.
+
 ## Motion (hover + scroll)
 
 GSAP (`gsap`, `@gsap/react`) provides the product's hover and scroll
@@ -807,6 +872,18 @@ code that doesn't match `src/lib/db.ts`.
 - `vehicles.*` permissions follow the same Manager-gets-all,
   Employee-gets-view/create/edit split used throughout the catalog
 
+**Phase 12 — Clothing / Retail**
+- A bulk Size × Color variant generator for Product — generic-core (every
+  industry benefits), just motivated by clothing retail's real need;
+  skips combinations that already exist instead of erroring on re-run
+- Returns/exchanges: `OrderItem.quantityReturned`, restocking through the
+  same movement ledger as every other stock change, finally exercising
+  the `RETURN` movement type that's existed since Phase 4
+- Deliberately does not reverse payment/invoice state — a real refund
+  flow is left as a documented gap, not guessed at
+- `sales.return` added, Manager and Employee both get it (frontline, same
+  as the original sale)
+
 ## Known gaps / deliberately not built yet
 
 - No organization switcher — a user with multiple orgs always lands on the
@@ -864,8 +941,15 @@ code that doesn't match `src/lib/db.ts`.
 - `vehicles.*` cross-role enforcement is verified at the permission
   catalog and UI-gate level only, same standing caveat as other
   manager-only/employee-scoped gates
-- Clothing/Retail (Phase 12), AI Business Intelligence — later phases per
-  the roadmap, not started
+- No refund/credit-note flow — a return restocks inventory and records
+  what came back, but reversing the money already collected is a real
+  feature intentionally left for later (see "Clothing / Retail" above)
+- No variant editing after generation (bulk-generated variants can't have
+  their price overridden or attributes changed in the UI yet — create-only,
+  matching the prevailing pattern); no variant archiving either
+- `sales.return` cross-role enforcement is verified at the permission
+  catalog and UI-gate level only, same standing caveat as above
+- AI Business Intelligence — the last phase per the roadmap, not started
 - Rate limiting is DB-query based, not a dedicated store; fine for now, but
   the first thing to revisit if abuse patterns show up in production traffic
 

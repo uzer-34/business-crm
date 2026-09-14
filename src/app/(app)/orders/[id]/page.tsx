@@ -7,6 +7,7 @@ import { loadTenantContext } from "@/lib/rbac/guard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatMoney } from "@/lib/format";
 import { FulfillItemForm } from "./fulfill-item-form";
+import { ReturnItemForm } from "./return-item-form";
 import { OrderPaymentForm } from "./order-payment-form";
 import { GenerateInvoiceButton } from "./generate-invoice-button";
 
@@ -47,6 +48,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
 
   const { organization } = order;
   const canFulfill = ctx.permissions.has("sales.fulfill") && order.status !== "CANCELLED";
+  const canReturn = ctx.permissions.has("sales.return");
   const outstanding = new Prisma.Decimal(order.total).minus(order.amountPaid);
   const existingInvoice = order.invoices[0];
 
@@ -87,6 +89,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
         <CardContent className="flex flex-col gap-3">
           {order.items.map((item) => {
             const remaining = item.quantityOrdered - item.quantityFulfilled;
+            const returnable = item.quantityFulfilled - item.quantityReturned;
             const name = item.product ? item.product.name : (item.service?.name ?? "");
             return (
               <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border p-3">
@@ -96,11 +99,15 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
                     {item.variant && ` · ${item.variant.sku}`}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {item.quantityFulfilled} / {item.quantityOrdered} fulfilled ·{" "}
+                    {item.quantityFulfilled} / {item.quantityOrdered} fulfilled
+                    {item.quantityReturned > 0 && ` · ${item.quantityReturned} returned`} ·{" "}
                     {formatMoney(item.unitPrice.toString(), organization.currencyCode, organization.locale)} each
                   </p>
                 </div>
-                {canFulfill && remaining > 0 && <FulfillItemForm orderItemId={item.id} remaining={remaining} />}
+                <div className="flex items-center gap-2">
+                  {canFulfill && remaining > 0 && <FulfillItemForm orderItemId={item.id} remaining={remaining} />}
+                  {canReturn && returnable > 0 && <ReturnItemForm orderItemId={item.id} returnable={returnable} />}
+                </div>
               </div>
             );
           })}

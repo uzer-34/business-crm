@@ -32,3 +32,9 @@ export const fulfillOrderItemSchema = z.object({
   orderItemId: z.string().min(1),
   quantity: z.coerce.number().int().positive(),
 });
+
+export const processReturnSchema = z.object({
+  orderItemId: z.string().min(1),
+  quantity: z.coerce.number().int().positive(),
+  reason: z.string().trim().max(500).optional(),
+});

@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext, requirePermission, assertBranchAccess, ForbiddenError } from "@/lib/rbac/guard";
-import { createOrderSchema, fulfillOrderItemSchema } from "@/lib/validation/sales";
+import { createOrderSchema, fulfillOrderItemSchema, processReturnSchema } from "@/lib/validation/sales";
 import { recordPaymentSchema } from "@/lib/validation/purchasing";
 import { applyStockMovement, getStockQuantity } from "@/lib/inventory/stock";
 import { logActivity } from "@/lib/customer/activity";
@@ -241,6 +241,79 @@ export async function fulfillOrderItemAction(input: unknown): Promise<ActionResu
     const message = error instanceof Error ? error.message : "Could not fulfill this item";
     return { ok: false, error: message };
   }
+}
+
+// Restocks inventory and records what came back — deliberately does not
+// touch Payment/Invoice/Order.amountPaid. Reversing money already
+// collected is a real feature (a credit note, a cash refund) that this
+// phase intentionally leaves as a manual follow-up rather than guessing
+// at a refund policy no one asked for yet (brief §45/§46: don't build
+// what isn't needed, and a feature isn't complete until every one of
+// functionality/security/persistence/UX/error-handling/testing is
+// actually addressed — silently mutating payment state without a real
+// refund flow behind it would fail that bar, not meet it).
+export async function processReturnAction(input: unknown): Promise<ActionResult> {
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, error: "Not signed in" };
+
+  const parsed = processReturnSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+  const { orderItemId, quantity, reason } = parsed.data;
+
+  const item = await db.orderItem.findUnique({ where: { id: orderItemId }, include: { order: true } });
+  if (!item) return { ok: false, error: "Order item not found" };
+
+  const ctx = await loadTenantContext(user.id, item.order.organizationId);
+  if (!ctx) return { ok: false, error: "Order item not found" };
+
+  try {
+    requirePermission(ctx, "sales.return");
+    await assertBranchAccess(ctx, item.order.branchId);
+  } catch (error) {
+    if (error instanceof ForbiddenError) return { ok: false, error: error.message };
+    throw error;
+  }
+
+  const returnable = item.quantityFulfilled - item.quantityReturned;
+  if (quantity > returnable) {
+    return { ok: false, error: `Cannot return more than the ${returnable} still with the customer` };
+  }
+
+  await db.$transaction(async (tx) => {
+    if (item.productId) {
+      await applyStockMovement(tx, {
+        organizationId: ctx.organizationId,
+        branchId: item.order.branchId,
+        productId: item.productId,
+        variantId: item.variantId,
+        type: "RETURN",
+        quantityDelta: quantity,
+        reason,
+        orderItemId: item.id,
+        actorUserId: user.id,
+      });
+    }
+
+    await tx.orderItem.update({
+      where: { id: item.id },
+      data: { quantityReturned: { increment: quantity } },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        organizationId: ctx.organizationId,
+        actorUserId: user.id,
+        action: "order.item_returned",
+        targetType: "OrderItem",
+        targetId: item.id,
+        metadata: { orderId: item.orderId, quantity, reason: reason ?? null },
+      },
+    });
+  });
+
+  return { ok: true, data: undefined };
 }
 
 export async function recordOrderPaymentAction(orderId: string, input: unknown): Promise<ActionResult> {
