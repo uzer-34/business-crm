@@ -24,7 +24,11 @@ const INDUSTRY_TERMINOLOGY: Partial<Record<IndustryKey, Partial<Record<TermKey, 
   repair: { order: "Job Card", orders: "Job Cards" },
   salon: { customer: "Client", customers: "Clients" },
   clinic: { customer: "Patient", customers: "Patients" },
+  hospital: { customer: "Patient", customers: "Patients" },
   restaurant: { customer: "Guest", customers: "Guests" },
+  cafe: { customer: "Guest", customers: "Guests" },
+  real_estate: { customer: "Client", customers: "Clients" },
+  financial_services: { customer: "Client", customers: "Clients" },
 };
 
 export function getTerminology(industryKey: string): Record<TermKey, string> {

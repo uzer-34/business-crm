@@ -9,6 +9,7 @@ export const INDUSTRIES = [
   { key: "jewellery", label: "Jewellery" },
   { key: "salon", label: "Salon" },
   { key: "restaurant", label: "Restaurant" },
+  { key: "cafe", label: "Cafe" },
   { key: "electronics_retail", label: "Electronics Store" },
   { key: "furniture", label: "Furniture" },
   { key: "construction", label: "Construction" },
@@ -16,6 +17,13 @@ export const INDUSTRIES = [
   { key: "repair", label: "Repair Services" },
   { key: "distributor", label: "Distributor / Wholesaler" },
   { key: "clinic", label: "Clinic" },
+  { key: "hospital", label: "Hospital" },
+  { key: "manufacturing", label: "Factory / Manufacturing" },
+  { key: "grocery_retail", label: "Grocery / Kirana Store" },
+  { key: "supermarket_retail", label: "Supermarket / Hypermarket" },
+  { key: "textiles", label: "Textiles" },
+  { key: "real_estate", label: "Real Estate" },
+  { key: "financial_services", label: "Financial Services" },
 ] as const;
 
 export type IndustryKey = (typeof INDUSTRIES)[number]["key"];
