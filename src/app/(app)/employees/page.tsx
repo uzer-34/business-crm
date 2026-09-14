@@ -67,6 +67,9 @@ export default async function EmployeesPage() {
               status={m.status}
               statusLabel={STATUS_LABEL[m.status]}
               branchNames={m.allBranches ? ["All branches"] : m.branches.map((b) => b.branch.name)}
+              allBranches={m.allBranches}
+              branchOptions={branches.map((b) => ({ id: b.id, name: b.name }))}
+              assignedBranchIds={m.branches.map((b) => b.branchId)}
               canManage={canManage}
             />
           ))}

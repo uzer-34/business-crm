@@ -46,3 +46,5 @@ export const createServiceSchema = z.object({
 });
 
 export type CreateServiceInput = z.infer<typeof createServiceSchema>;
+
+export const editServiceSchema = createServiceSchema;

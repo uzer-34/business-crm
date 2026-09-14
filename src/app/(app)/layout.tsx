@@ -24,10 +24,12 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     { href: "/reports", label: "Reports" },
     { href: "/products", label: "Products" },
     { href: "/services", label: "Services" },
+    { href: "/categories", label: "Categories" },
     { href: "/inventory", label: "Inventory" },
     { href: "/suppliers", label: "Suppliers" },
     { href: "/purchase-orders", label: "Purchase Orders" },
     { href: "/employees", label: "Employees" },
+    { href: "/roles", label: "Roles" },
     { href: "/branches", label: "Branches" },
     { href: "/settings", label: "Settings" },
   ];

@@ -83,10 +83,14 @@ Passwordless, phone or email, OTP-based:
   cooldown (60s), and rate limiting per-target and per-IP (DB-query based;
   no Redis dependency yet — fine at current scale, revisit if it becomes a
   bottleneck).
-- `src/lib/auth/otp-provider.ts` — `OtpProvider` interface with a
-  `ConsoleOtpProvider` (prints the code server-side) as the only
-  implementation. Swapping in Twilio/MSG91/SES/etc. means implementing this
-  interface — auth business logic never changes.
+- `src/lib/auth/otp-provider.ts` — `OtpProvider` interface. Email goes
+  through Resend (a real network call, real free tier — 3,000/month, no
+  billing required) when `RESEND_API_KEY` is set; email falls back to
+  `ConsoleOtpProvider` (prints the code server-side) when it isn't, and
+  SMS is always `ConsoleOtpProvider` — there's no free/real SMS vendor to
+  wire up the way there is for email (Twilio etc. require billing, not
+  just an API key), so "swap in a real provider for free" isn't honestly
+  possible for that channel yet.
 - Sessions are opaque random tokens; only their SHA-256 hash is stored
   (`Session.tokenHash`), so a database leak doesn't yield live sessions. The
   cookie is `httpOnly`, `sameSite=lax`, and `secure` in production.
@@ -1009,6 +1013,48 @@ code that doesn't match `src/lib/db.ts`.
   entity-detail edit/archive, order/PO cancel, the org switcher, and
   refunds specifically, not every create-only surface
 
+**Second UI completeness pass**
+- Real email OTP delivery via Resend (see "Authentication" above) —
+  closes the gap where a hosted deployment would have been unusable
+  (login codes only ever printed to the server console, invisible to any
+  real user)
+- Service gained edit/archive — it was missed in the first pass, which
+  only covered Product; a real Category management screen followed
+  (`/categories`), covering all three kinds (Product/Service/Expense)
+  that share the `Category` model
+- Employee branch assignment can now be edited after invite
+  (`changeEmployeeBranchesAction`), and a membership can be removed
+  entirely (`removeEmployeeAction`, a real hard delete — safe because
+  every FK that can point at a Membership is SetNull or cascades in
+  schema.prisma, so real history like a customer or order survives with
+  its assignment cleared rather than being deleted along with it); a
+  removal is blocked on removing yourself or the organization's only
+  Owner
+- Custom roles: an Owner can create a role with any permission subset
+  (`createCustomRoleAction`), and any role's permissions can be adjusted
+  after creation (`updateRolePermissionsAction`) except Owner, which
+  always keeps the full catalog — letting someone strip permissions from
+  Owner risks locking every Owner in the org out with no way back in
+  through the UI. Adding custom roles surfaced a real privilege-escalation
+  gap in the existing employee-invite/role-change code: those actions
+  only ever special-cased granting the literal "owner" role, so a Manager
+  (who already has `employees.manage`) could have assigned an employee a
+  custom role built with more permissions than the Manager's own —
+  replaced with a general `requireCanGrantRole` check that a caller can
+  only grant a role whose permissions are a subset of their own, which
+  subsumes the old owner-specific check for free (only another Owner's
+  permission set is a superset of Owner's)
+- Also fixed two pre-existing, real RBAC catalog gaps found while working
+  on this, same class as the `purchases.cancel` one from the first pass:
+  Manager had `products.edit`/`services.edit` but not the matching
+  `.archive` permissions, inconsistent with every other edit+archive pair
+  in the catalog (suppliers, vehicles, customers all give Manager both);
+  and `inviteEmployeeSchema`/`changeEmployeeRoleSchema` validated
+  `roleKey` against a hardcoded `z.enum(["owner","manager","employee"])`,
+  which would have silently rejected assigning any custom role — loosened
+  to a plain string, since the actual validity check (does a role with
+  this key exist in this org) already happens via `db.role.findFirst`
+
 ## Known gaps / deliberately not built yet
 
 - Organization switcher is real now (see "UI completeness pass" above) — a
@@ -1017,9 +1063,11 @@ code that doesn't match `src/lib/db.ts`.
   `getDefaultMembershipOrRedirect` reads first; still no in-app way to
   create a second org (only reachable today via an employee invite into
   someone else's org)
-- No custom-role UI (the `roles.manage` permission exists, unused) — the
-  invite flow (Phase 9) only ever assigns one of the three fixed system
-  roles; branch assignment can be set at invite time but not edited after
+- Custom roles are real now (see "Second UI completeness pass" below) —
+  an Owner can create a role with any permission subset, and both system
+  and custom roles' permissions can be adjusted after the fact (except
+  Owner, which always keeps everything); branch assignment can now be
+  edited after invite too, and a membership can be fully removed
 - No configurable workflow engine — a deliberate Phase 9 scoping decision,
   see "Employees, Tasks & Notifications" above
 - Customer still has an optional `branchId` that nothing enforces —
@@ -1030,8 +1078,11 @@ code that doesn't match `src/lib/db.ts`.
 - Notes and customer-scoped Tasks still ride on `customers.edit` rather
   than their own permission keys (standalone tasks got real `tasks.*`
   keys in Phase 9; customer-linked ones weren't revisited)
-- Product edit/archive is real (UI completeness pass); Service still has no
-  edit/archive UI yet; no dedicated Category management screen
+- Product and Service edit/archive are both real now (Service was missed
+  in the first UI completeness pass, added in the second — see below); a
+  real Category management screen exists too (`/categories`), rename and
+  archive, gated per-kind by the same permission that already governs
+  that kind's records (products.edit / services.edit / expenses.void)
 - No per-product movement history page — the inventory page shows the last
   20 movements for the whole branch, not filtered per product
 - PO cancel is real now (only while nothing's been received/paid yet — see
@@ -1057,9 +1108,9 @@ code that doesn't match `src/lib/db.ts`.
   calendar month — no date-range picker, no per-branch or per-category
   breakdown, no export. Real but intentionally minimal; a fuller report
   is Phase 13's job (AI Business Intelligence), not this one's
-- No way to edit an employee's branch assignment after the invite, or to
-  remove a membership entirely (suspend is the only lifecycle action
-  besides role change)
+- Editing branch assignment and fully removing a membership are both real
+  now (see "Second UI completeness pass" below) — suspend/reactivate is
+  no longer the only lifecycle action besides role change
 - Notifications have no per-type user preferences and no "notify me on X"
   triggers beyond task/customer assignment — real but minimal, same
   reasoning as the financial summary card
@@ -1099,6 +1150,10 @@ code that doesn't match `src/lib/db.ts`.
   not an engineering one
 - Rate limiting is DB-query based, not a dedicated store; fine for now, but
   the first thing to revisit if abuse patterns show up in production traffic
+- Phone-channel OTP login still only prints to the server console — there's
+  no free/real SMS vendor to wire up (unlike email via Resend); an org that
+  wants phone login working for real needs a paid SMS provider implementing
+  the same `OtpProvider` interface
 
 ## Phase roadmap
 

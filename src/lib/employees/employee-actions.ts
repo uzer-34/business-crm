@@ -3,17 +3,23 @@
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext, requirePermission, ForbiddenError } from "@/lib/rbac/guard";
-import { inviteEmployeeSchema, changeEmployeeRoleSchema } from "@/lib/validation/employees";
+import {
+  inviteEmployeeSchema,
+  changeEmployeeRoleSchema,
+  changeEmployeeBranchesSchema,
+} from "@/lib/validation/employees";
 import type { ActionResult } from "@/lib/auth/actions";
 
-// Assigning the Owner role is only ever allowed to another Owner — otherwise
-// a Manager (who already has employees.manage) could invite someone with
-// more power than the Manager themselves has.
-async function requireOwnerToGrantOwner(organizationId: string, callerRoleId: string, targetRoleKey: string) {
-  if (targetRoleKey !== "owner") return;
-  const callerRole = await db.role.findUnique({ where: { id: callerRoleId } });
-  if (callerRole?.key !== "owner") {
-    throw new ForbiddenError("Only an Owner can grant the Owner role");
+// Nobody can grant a role with a permission they don't hold themselves —
+// otherwise a Manager (who already has employees.manage) could invite
+// someone into a role with more power than the Manager has, whether that's
+// the Owner role or a custom role an Owner built with a broad permission
+// set. An Owner's own ctx.permissions always contains the full catalog, so
+// this naturally still lets an Owner grant anything, including Owner.
+function requireCanGrantRole(ctx: { permissions: Set<string> }, targetRolePermissionKeys: string[]) {
+  const missing = targetRolePermissionKeys.find((key) => !ctx.permissions.has(key));
+  if (missing) {
+    throw new ForbiddenError("You cannot grant a role with permissions you don't have yourself");
   }
 }
 
@@ -39,17 +45,21 @@ export async function inviteEmployeeAction(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
 
+  const role = await db.role.findFirst({
+    where: { organizationId: ctx.organizationId, key: parsed.data.roleKey },
+    include: { permissions: { include: { permission: true } } },
+  });
+  if (!role) return { ok: false, error: "Role not found for this organization" };
+
   try {
-    await requireOwnerToGrantOwner(ctx.organizationId, ctx.roleId, parsed.data.roleKey);
+    requireCanGrantRole(
+      ctx,
+      role.permissions.map((rp) => rp.permission.key),
+    );
   } catch (error) {
     if (error instanceof ForbiddenError) return { ok: false, error: error.message };
     throw error;
   }
-
-  const role = await db.role.findFirst({
-    where: { organizationId: ctx.organizationId, key: parsed.data.roleKey },
-  });
-  if (!role) return { ok: false, error: "Role not found for this organization" };
 
   if (!parsed.data.allBranches && parsed.data.branchIds.length > 0) {
     const validBranches = await db.branch.count({
@@ -134,17 +144,21 @@ export async function changeEmployeeRoleAction(membershipId: string, input: unkn
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
 
+  const role = await db.role.findFirst({
+    where: { organizationId: ctx.organizationId, key: parsed.data.roleKey },
+    include: { permissions: { include: { permission: true } } },
+  });
+  if (!role) return { ok: false, error: "Role not found for this organization" };
+
   try {
-    await requireOwnerToGrantOwner(ctx.organizationId, ctx.roleId, parsed.data.roleKey);
+    requireCanGrantRole(
+      ctx,
+      role.permissions.map((rp) => rp.permission.key),
+    );
   } catch (error) {
     if (error instanceof ForbiddenError) return { ok: false, error: error.message };
     throw error;
   }
-
-  const role = await db.role.findFirst({
-    where: { organizationId: ctx.organizationId, key: parsed.data.roleKey },
-  });
-  if (!role) return { ok: false, error: "Role not found for this organization" };
 
   await db.$transaction(async (tx) => {
     await tx.membership.update({ where: { id: membershipId }, data: { roleId: role.id } });
@@ -235,6 +249,116 @@ export async function reactivateEmployeeAction(membershipId: string): Promise<Ac
         targetId: membershipId,
       },
     });
+  });
+
+  return { ok: true, data: undefined };
+}
+
+export async function changeEmployeeBranchesAction(membershipId: string, input: unknown): Promise<ActionResult> {
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, error: "Not signed in" };
+
+  const membership = await db.membership.findUnique({ where: { id: membershipId } });
+  if (!membership) return { ok: false, error: "Membership not found" };
+
+  const ctx = await loadTenantContext(user.id, membership.organizationId);
+  if (!ctx) return { ok: false, error: "Membership not found" };
+
+  try {
+    requirePermission(ctx, "employees.manage");
+  } catch (error) {
+    if (error instanceof ForbiddenError) return { ok: false, error: error.message };
+    throw error;
+  }
+
+  const parsed = changeEmployeeBranchesSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+
+  if (!parsed.data.allBranches && parsed.data.branchIds.length > 0) {
+    const validBranches = await db.branch.count({
+      where: { id: { in: parsed.data.branchIds }, organizationId: ctx.organizationId, archivedAt: null },
+    });
+    if (validBranches !== parsed.data.branchIds.length) {
+      return { ok: false, error: "One or more branches were not found" };
+    }
+  }
+
+  await db.$transaction(async (tx) => {
+    await tx.membershipBranch.deleteMany({ where: { membershipId } });
+    await tx.membership.update({
+      where: { id: membershipId },
+      data: {
+        allBranches: parsed.data.allBranches,
+        branches: parsed.data.allBranches
+          ? undefined
+          : { create: parsed.data.branchIds.map((branchId) => ({ branchId })) },
+      },
+    });
+    await tx.auditLog.create({
+      data: {
+        organizationId: ctx.organizationId,
+        actorUserId: user.id,
+        action: "employee.branches_changed",
+        targetType: "Membership",
+        targetId: membershipId,
+        metadata: { allBranches: parsed.data.allBranches, branchIds: parsed.data.branchIds },
+      },
+    });
+  });
+
+  return { ok: true, data: undefined };
+}
+
+// A hard delete, not another status like suspend — the person is fully
+// severed from the org, not just locked out. Safe to do this way: every FK
+// that can point at a Membership (Customer/Task/Order.assignedToId,
+// Notification) is either SetNull or cascades in schema.prisma, so real
+// history (the customer, the order, the task) survives with its assignment
+// cleared, it just isn't silently deleted along with the membership.
+export async function removeEmployeeAction(membershipId: string): Promise<ActionResult> {
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, error: "Not signed in" };
+
+  const membership = await db.membership.findUnique({ where: { id: membershipId }, include: { role: true } });
+  if (!membership) return { ok: false, error: "Membership not found" };
+
+  const ctx = await loadTenantContext(user.id, membership.organizationId);
+  if (!ctx) return { ok: false, error: "Membership not found" };
+
+  try {
+    requirePermission(ctx, "employees.manage");
+  } catch (error) {
+    if (error instanceof ForbiddenError) return { ok: false, error: error.message };
+    throw error;
+  }
+
+  if (membership.id === ctx.membershipId) {
+    return { ok: false, error: "You cannot remove yourself" };
+  }
+
+  if (membership.role.key === "owner") {
+    const ownerCount = await db.membership.count({
+      where: { organizationId: ctx.organizationId, role: { key: "owner" }, status: { not: "SUSPENDED" } },
+    });
+    if (ownerCount <= 1) {
+      return { ok: false, error: "Cannot remove the only Owner" };
+    }
+  }
+
+  await db.$transaction(async (tx) => {
+    await tx.auditLog.create({
+      data: {
+        organizationId: ctx.organizationId,
+        actorUserId: user.id,
+        action: "employee.removed",
+        targetType: "Membership",
+        targetId: membershipId,
+        metadata: { roleKey: membership.role.key },
+      },
+    });
+    await tx.membership.delete({ where: { id: membershipId } });
   });
 
   return { ok: true, data: undefined };

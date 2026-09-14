@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { db } from "@/lib/db";
 import { getDefaultMembershipOrRedirect } from "@/lib/organization/actions";
 import { Card, CardContent } from "@/components/ui/card";
@@ -42,22 +43,24 @@ export default async function ServicesPage() {
       ) : (
         <RevealOnScroll className="flex flex-col gap-3">
           {services.map((service) => (
-            <HoverLift key={service.id}>
-              <Card>
-                <CardContent className="flex items-center justify-between p-4">
-                  <div>
-                    <p className="font-medium">{service.name}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {service.category?.name}
-                      {service.durationMinutes && `${service.category ? " · " : ""}${service.durationMinutes} min`}
+            <Link key={service.id} href={`/services/${service.id}`}>
+              <HoverLift>
+                <Card>
+                  <CardContent className="flex items-center justify-between p-4">
+                    <div>
+                      <p className="font-medium">{service.name}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {service.category?.name}
+                        {service.durationMinutes && `${service.category ? " · " : ""}${service.durationMinutes} min`}
+                      </p>
+                    </div>
+                    <p className="font-medium tabular-nums">
+                      {formatMoney(service.price.toString(), organization.currencyCode, organization.locale)}
                     </p>
-                  </div>
-                  <p className="font-medium tabular-nums">
-                    {formatMoney(service.price.toString(), organization.currencyCode, organization.locale)}
-                  </p>
-                </CardContent>
-              </Card>
-            </HoverLift>
+                  </CardContent>
+                </Card>
+              </HoverLift>
+            </Link>
           ))}
         </RevealOnScroll>
       )}
