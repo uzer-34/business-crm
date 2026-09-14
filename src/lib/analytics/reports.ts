@@ -50,10 +50,11 @@ export async function getMonthlyRevenueTrend(organizationId: string, months = 6)
   }));
 }
 
-export async function getTopCustomersByRevenue(organizationId: string, take = 5): Promise<TopCustomer[]> {
+export async function getTopCustomersByRevenue(organizationId: string, take = 5, days = 180): Promise<TopCustomer[]> {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   const grouped = await db.invoice.groupBy({
     by: ["customerId"],
-    where: { organizationId, status: "ISSUED", customerId: { not: null } },
+    where: { organizationId, status: "ISSUED", customerId: { not: null }, issuedAt: { gte: since } },
     _sum: { total: true },
     orderBy: { _sum: { total: "desc" } },
     take,
@@ -72,10 +73,15 @@ export async function getTopCustomersByRevenue(organizationId: string, take = 5)
     }));
 }
 
-export async function getTopProductsByQuantityFulfilled(organizationId: string, take = 5): Promise<TopProduct[]> {
+export async function getTopProductsByQuantityFulfilled(
+  organizationId: string,
+  take = 5,
+  days = 180,
+): Promise<TopProduct[]> {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   const grouped = await db.orderItem.groupBy({
     by: ["productId"],
-    where: { productId: { not: null }, order: { organizationId } },
+    where: { productId: { not: null }, order: { organizationId, createdAt: { gte: since } } },
     _sum: { quantityFulfilled: true },
     orderBy: { _sum: { quantityFulfilled: "desc" } },
     take,

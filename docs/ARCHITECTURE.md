@@ -1140,9 +1140,17 @@ code that doesn't match `src/lib/db.ts`.
   deployment's environment, so the AI Summary feature is real but dormant
   until an operator sets one (Gemini's is free — see "AI Business
   Intelligence" above) — this is expected, not a bug
-- The Reports page has no date-range picker (fixed 6-month/30-day windows)
-  and no export; real but intentionally minimal, same reasoning as the
-  Expenses page's financial summary card
+- The Reports page has a real date-range picker now (30 days / 3 / 6 / 12
+  months, `?days=` on `/reports`) driving all four report sections
+  consistently — revenue trend, top customers, top products, and expense
+  breakdown all use the same window. Top customers/products were
+  previously unbounded (all-time) while revenue trend/expenses were
+  windowed, a real inconsistency the same fix closed. Still no export, no
+  custom/arbitrary date range beyond the four presets — same reasoning as
+  the Expenses page's financial summary card; the AI summary
+  (`generateBusinessSummaryAction`) still uses its own fixed windows
+  rather than the page's current selection, a smaller follow-up if it
+  matters
 - No saved/scheduled reports, no per-branch report breakdown
 - Additional industry packs beyond Automobile Workshop and Clothing/Retail
   — the roadmap's Phase 14 — not started; ask before building another

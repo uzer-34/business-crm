@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getDefaultMembershipOrRedirect } from "@/lib/organization/actions";
 import { loadTenantContext } from "@/lib/rbac/guard";
@@ -20,7 +21,15 @@ function Bar({ value, max }: { value: number; max: number }) {
   );
 }
 
-export default async function ReportsPage() {
+const RANGE_OPTIONS = [
+  { days: 30, label: "Last 30 days" },
+  { days: 90, label: "Last 3 months" },
+  { days: 180, label: "Last 6 months" },
+  { days: 365, label: "Last 12 months" },
+] as const;
+const DEFAULT_DAYS = 180;
+
+export default async function ReportsPage({ searchParams }: PageProps<"/reports">) {
   const { membership } = await getDefaultMembershipOrRedirect();
   const user = await getCurrentUser();
   const ctx = user ? await loadTenantContext(user.id, membership.organizationId) : null;
@@ -40,11 +49,17 @@ export default async function ReportsPage() {
   const canSeeFinancial = ctx.permissions.has("reports.financial");
   const canSeeSales = ctx.permissions.has("reports.sales");
 
+  const params = await searchParams;
+  const requestedDays = Number(Array.isArray(params.days) ? params.days[0] : params.days);
+  const days = RANGE_OPTIONS.some((o) => o.days === requestedDays) ? requestedDays : DEFAULT_DAYS;
+  const months = Math.max(1, Math.round(days / 30));
+  const rangeLabel = RANGE_OPTIONS.find((o) => o.days === days)?.label ?? `Last ${days} days`;
+
   const [revenueTrend, topCustomers, topProducts, expenseBreakdown] = await Promise.all([
-    canSeeFinancial ? getMonthlyRevenueTrend(organization.id) : Promise.resolve([]),
-    canSeeSales ? getTopCustomersByRevenue(organization.id) : Promise.resolve([]),
-    canSeeSales ? getTopProductsByQuantityFulfilled(organization.id) : Promise.resolve([]),
-    canSeeFinancial ? getExpenseBreakdownByCategory(organization.id) : Promise.resolve([]),
+    canSeeFinancial ? getMonthlyRevenueTrend(organization.id, months) : Promise.resolve([]),
+    canSeeSales ? getTopCustomersByRevenue(organization.id, 5, days) : Promise.resolve([]),
+    canSeeSales ? getTopProductsByQuantityFulfilled(organization.id, 5, days) : Promise.resolve([]),
+    canSeeFinancial ? getExpenseBreakdownByCategory(organization.id, days) : Promise.resolve([]),
   ]);
 
   const maxRevenue = Math.max(...revenueTrend.map((p) => Number(p.total)), 0);
@@ -54,9 +69,24 @@ export default async function ReportsPage() {
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Reports</h1>
-        <p className="text-sm text-muted-foreground">{organization.name}</p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Reports</h1>
+          <p className="text-sm text-muted-foreground">{organization.name}</p>
+        </div>
+        <div className="flex gap-1 rounded-md border border-border p-1">
+          {RANGE_OPTIONS.map((option) => (
+            <Link
+              key={option.days}
+              href={`/reports?days=${option.days}`}
+              className={`rounded-sm px-2.5 py-1 text-xs font-medium transition-colors ${
+                option.days === days ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {option.label}
+            </Link>
+          ))}
+        </div>
       </div>
 
       {canSeeFinancial && <AiSummaryCard organizationId={organization.id} />}
@@ -65,7 +95,7 @@ export default async function ReportsPage() {
         <Card>
           <CardHeader>
             <CardTitle>Revenue trend</CardTitle>
-            <CardDescription>Issued invoice totals, last 6 months.</CardDescription>
+            <CardDescription>Issued invoice totals, {rangeLabel.toLowerCase()}.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-2">
             {revenueTrend.map((point) => (
@@ -131,11 +161,11 @@ export default async function ReportsPage() {
         <Card>
           <CardHeader>
             <CardTitle>Expenses by category</CardTitle>
-            <CardDescription>Last 30 days.</CardDescription>
+            <CardDescription>{rangeLabel}.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-2">
             {expenseBreakdown.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No expenses recorded in the last 30 days.</p>
+              <p className="text-sm text-muted-foreground">No expenses recorded in this period.</p>
             ) : (
               expenseBreakdown.map((e) => (
                 <div key={e.categoryId ?? "uncategorized"} className="flex items-center gap-3 text-sm">
