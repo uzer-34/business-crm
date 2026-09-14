@@ -6,6 +6,8 @@ import { tracksVehicles } from "@/lib/industry/registry";
 import { Card, CardContent } from "@/components/ui/card";
 import { summarizeActivity } from "@/lib/customer/activity-summary";
 import { CustomerDetail } from "./customer-detail";
+import { EditCustomerForm } from "./edit-customer-form";
+import { ArchiveCustomerButton } from "./archive-customer-button";
 
 const STATUS_LABEL: Record<string, string> = { LEAD: "Lead", ACTIVE: "Active", INACTIVE: "Inactive" };
 
@@ -143,9 +145,24 @@ export default async function CustomerPage({ params }: PageProps<"/customers/[id
               {[customer.email, customer.phone].filter(Boolean).join(" · ") || "No contact info"}
             </p>
           </div>
-          <span className="rounded-full bg-accent px-2 py-0.5 text-xs font-medium text-accent-foreground">
-            {STATUS_LABEL[customer.status]}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="rounded-full bg-accent px-2 py-0.5 text-xs font-medium text-accent-foreground">
+              {STATUS_LABEL[customer.status]}
+            </span>
+            {ctx.permissions.has("customers.edit") && (
+              <EditCustomerForm
+                customerId={customer.id}
+                initial={{
+                  type: customer.type,
+                  name: customer.name,
+                  email: customer.email,
+                  phone: customer.phone,
+                  status: customer.status,
+                }}
+              />
+            )}
+            {ctx.permissions.has("customers.delete") && <ArchiveCustomerButton customerId={customer.id} />}
+          </div>
         </CardContent>
       </Card>
 

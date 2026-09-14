@@ -8,6 +8,10 @@ export function summarizeActivity(activity: ActivityLike): string {
       return "Customer created";
     case "customer.assigned":
       return metadata.assignedToId ? "Customer reassigned" : "Customer unassigned";
+    case "customer.updated":
+      return "Customer details updated";
+    case "customer.archived":
+      return "Customer archived";
     case "note.added":
       return "Note added";
     case "task.created":

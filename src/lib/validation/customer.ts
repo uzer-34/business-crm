@@ -16,6 +16,8 @@ export const createCustomerSchema = z.object({
 
 export type CreateCustomerInput = z.infer<typeof createCustomerSchema>;
 
+export const editCustomerSchema = createCustomerSchema;
+
 export const createNoteSchema = z.object({
   body: z.string().trim().min(1).max(4000),
 });

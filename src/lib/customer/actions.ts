@@ -3,7 +3,7 @@
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext, requirePermission, ForbiddenError } from "@/lib/rbac/guard";
-import { createCustomerSchema } from "@/lib/validation/customer";
+import { createCustomerSchema, editCustomerSchema } from "@/lib/validation/customer";
 import { logActivity } from "./activity";
 import { notifyMembership } from "@/lib/notifications/notify";
 import type { ActionResult } from "@/lib/auth/actions";
@@ -117,6 +117,71 @@ export async function assignCustomerAction(
         linkPath: `/customers/${customerId}`,
       });
     }
+  });
+
+  return { ok: true, data: undefined };
+}
+
+export async function editCustomerAction(customerId: string, input: unknown): Promise<ActionResult> {
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, error: "Not signed in" };
+
+  const loaded = await loadCustomerContext(user.id, customerId);
+  if (!loaded) return { ok: false, error: "Customer not found" };
+  const { ctx } = loaded;
+
+  try {
+    requirePermission(ctx, "customers.edit");
+  } catch (error) {
+    if (error instanceof ForbiddenError) return { ok: false, error: error.message };
+    throw error;
+  }
+
+  const parsed = editCustomerSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+
+  const { email, ...rest } = parsed.data;
+
+  await db.$transaction(async (tx) => {
+    await tx.customer.update({ where: { id: customerId }, data: { email: email || null, ...rest } });
+    await logActivity(tx, {
+      organizationId: ctx.organizationId,
+      subjectType: "Customer",
+      subjectId: customerId,
+      type: "customer.updated",
+      actorUserId: user.id,
+    });
+  });
+
+  return { ok: true, data: undefined };
+}
+
+export async function archiveCustomerAction(customerId: string): Promise<ActionResult> {
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, error: "Not signed in" };
+
+  const loaded = await loadCustomerContext(user.id, customerId);
+  if (!loaded) return { ok: false, error: "Customer not found" };
+  const { ctx } = loaded;
+
+  try {
+    requirePermission(ctx, "customers.delete");
+  } catch (error) {
+    if (error instanceof ForbiddenError) return { ok: false, error: error.message };
+    throw error;
+  }
+
+  await db.$transaction(async (tx) => {
+    await tx.customer.update({ where: { id: customerId }, data: { archivedAt: new Date() } });
+    await logActivity(tx, {
+      organizationId: ctx.organizationId,
+      subjectType: "Customer",
+      subjectId: customerId,
+      type: "customer.archived",
+      actorUserId: user.id,
+    });
   });
 
   return { ok: true, data: undefined };

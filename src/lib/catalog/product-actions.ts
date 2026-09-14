@@ -3,7 +3,12 @@
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext, requirePermission, ForbiddenError } from "@/lib/rbac/guard";
-import { createProductSchema, createVariantSchema, generateVariantMatrixSchema } from "@/lib/validation/catalog";
+import {
+  createProductSchema,
+  editProductSchema,
+  createVariantSchema,
+  generateVariantMatrixSchema,
+} from "@/lib/validation/catalog";
 import { findOrCreateCategory } from "./category";
 import type { ActionResult } from "@/lib/auth/actions";
 
@@ -66,6 +71,83 @@ export async function createProductAction(
   } catch {
     return { ok: false, error: "Could not create product" };
   }
+}
+
+async function loadProductContext(userId: string, productId: string) {
+  const product = await db.product.findUnique({ where: { id: productId } });
+  if (!product) return null;
+
+  const ctx = await loadTenantContext(userId, product.organizationId);
+  if (!ctx) return null;
+
+  return { product, ctx };
+}
+
+export async function editProductAction(productId: string, input: unknown): Promise<ActionResult> {
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, error: "Not signed in" };
+
+  const loaded = await loadProductContext(user.id, productId);
+  if (!loaded) return { ok: false, error: "Product not found" };
+  const { ctx } = loaded;
+
+  try {
+    requirePermission(ctx, "products.edit");
+  } catch (error) {
+    if (error instanceof ForbiddenError) return { ok: false, error: error.message };
+    throw error;
+  }
+
+  const parsed = editProductSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+
+  const existingSku = await db.product.findFirst({
+    where: { organizationId: ctx.organizationId, sku: parsed.data.sku, id: { not: productId } },
+  });
+  if (existingSku) return { ok: false, error: "A product with this SKU already exists" };
+
+  if (parsed.data.preferredSupplierId) {
+    const supplier = await db.supplier.findFirst({
+      where: { id: parsed.data.preferredSupplierId, organizationId: ctx.organizationId },
+    });
+    if (!supplier) return { ok: false, error: "Preferred supplier not found" };
+  }
+
+  try {
+    await db.$transaction(async (tx) => {
+      const { categoryName, ...rest } = parsed.data;
+      const categoryId = categoryName
+        ? await findOrCreateCategory(tx, { organizationId: ctx.organizationId, kind: "PRODUCT", name: categoryName })
+        : null;
+
+      await tx.product.update({ where: { id: productId }, data: { categoryId, ...rest } });
+    });
+
+    return { ok: true, data: undefined };
+  } catch {
+    return { ok: false, error: "Could not update product" };
+  }
+}
+
+export async function archiveProductAction(productId: string): Promise<ActionResult> {
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, error: "Not signed in" };
+
+  const loaded = await loadProductContext(user.id, productId);
+  if (!loaded) return { ok: false, error: "Product not found" };
+  const { ctx } = loaded;
+
+  try {
+    requirePermission(ctx, "products.archive");
+  } catch (error) {
+    if (error instanceof ForbiddenError) return { ok: false, error: error.message };
+    throw error;
+  }
+
+  await db.product.update({ where: { id: productId }, data: { archivedAt: new Date() } });
+  return { ok: true, data: undefined };
 }
 
 export async function createProductVariantAction(productId: string, input: unknown): Promise<ActionResult> {

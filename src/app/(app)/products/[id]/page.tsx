@@ -7,6 +7,8 @@ import { RevealOnScroll } from "@/components/motion/reveal-on-scroll";
 import { formatMoney } from "@/lib/format";
 import { AddVariantForm } from "./add-variant-form";
 import { VariantMatrixForm } from "./variant-matrix-form";
+import { EditProductForm } from "./edit-product-form";
+import { ArchiveProductButton } from "./archive-product-button";
 
 export default async function ProductPage({ params }: PageProps<"/products/[id]">) {
   const { id } = await params;
@@ -37,13 +39,34 @@ export default async function ProductPage({ params }: PageProps<"/products/[id]"
               {product.brand && ` · ${product.brand}`}
             </p>
           </div>
-          <div className="text-right">
-            <p className="font-semibold tabular-nums">
-              {formatMoney(product.sellingPrice.toString(), organization.currencyCode, organization.locale)}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Cost {formatMoney(product.costPrice.toString(), organization.currencyCode, organization.locale)}
-            </p>
+          <div className="flex items-start gap-4">
+            <div className="text-right">
+              <p className="font-semibold tabular-nums">
+                {formatMoney(product.sellingPrice.toString(), organization.currencyCode, organization.locale)}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Cost {formatMoney(product.costPrice.toString(), organization.currencyCode, organization.locale)}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              {ctx.permissions.has("products.edit") && (
+                <EditProductForm
+                  productId={product.id}
+                  initial={{
+                    name: product.name,
+                    sku: product.sku,
+                    barcode: product.barcode,
+                    brand: product.brand,
+                    unit: product.unit,
+                    costPrice: product.costPrice.toString(),
+                    sellingPrice: product.sellingPrice.toString(),
+                    taxRatePercent: product.taxRatePercent.toString(),
+                    categoryName: product.category?.name ?? "",
+                  }}
+                />
+              )}
+              {ctx.permissions.has("products.archive") && <ArchiveProductButton productId={product.id} />}
+            </div>
           </div>
         </CardContent>
       </Card>

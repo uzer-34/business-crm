@@ -953,10 +953,31 @@ code that doesn't match `src/lib/db.ts`.
   expense breakdown — all real Prisma aggregation, no AI involved, finally
   giving the `reports.sales`/`reports.financial` permissions (seeded since
   Phase 1) a real home
-- An honestly-gated AI narrative layer: reports "not configured" when no
-  `ANTHROPIC_API_KEY` is set rather than fabricating output, and makes a
-  real Anthropic API call (surfacing the real result or the real error)
-  when one is — generated on demand via a button, never on page load
+- An honestly-gated AI narrative layer: reports "not configured" when
+  neither `GEMINI_API_KEY` nor `ANTHROPIC_API_KEY` is set rather than
+  fabricating output, and makes a real API call to whichever is set
+  (Gemini first — see "AI Business Intelligence" above), surfacing the
+  real result or the real error — generated on demand via a button, never
+  on page load
+
+**UI completeness pass (post-Phase 13)**
+- Not a new industry — the roadmap's Phase 14 slot is still reserved for
+  that and remains open (see "Known gaps" below); this instead closes out
+  the create-only pattern that several entity modules had been left in
+  since their own phase
+- Customer, Product, and Supplier each gained real edit + archive actions
+  and forms; Vehicle gained an edit form for the `editVehicleAction` that
+  had existed since Phase 11 with no UI wired to it
+- Supplier gained its first detail page at all (`/suppliers/[id]`) —
+  previously suppliers were list-only with nowhere to link to; it also
+  shows that supplier's purchase order history, same pattern as the
+  Vehicle detail page's service history
+- No RBAC changes needed — `customers.edit`/`.delete`, `products.edit`/
+  `.archive`, `suppliers.edit`/`.archive`, `vehicles.edit` were all seeded
+  in earlier phases and simply had no action/UI behind them yet
+- Order/PO cancel, invoice/expense edit, and the refund/credit-note flow
+  remain open (see "Known gaps") — this pass covered the entity-detail
+  edit/archive gaps specifically, not every create-only surface
 
 ## Known gaps / deliberately not built yet
 
@@ -970,17 +991,18 @@ code that doesn't match `src/lib/db.ts`.
 - Customer still has an optional `branchId` that nothing enforces —
   `assertBranchAccess()` is now real (see "Inventory" above) but not yet
   applied to Customer reads/writes
-- No customer edit/archive UI yet (create + assign only); no search/filter
+- Customer edit/archive is real (UI completeness pass); still no search/filter
   on the customer list beyond the default sort
 - Notes and customer-scoped Tasks still ride on `customers.edit` rather
   than their own permission keys (standalone tasks got real `tasks.*`
   keys in Phase 9; customer-linked ones weren't revisited)
-- No product/service edit or archive UI yet (create-only, matching the
-  Customer/Branch pattern so far); no dedicated Category management screen
+- Product edit/archive is real (UI completeness pass); Service still has no
+  edit/archive UI yet; no dedicated Category management screen
 - No per-product movement history page — the inventory page shows the last
   20 movements for the whole branch, not filtered per product
-- No PO edit/cancel UI yet (`purchases.cancel` permission exists, unused);
-  no supplier edit/archive UI (create-only, matching every other module)
+- No PO edit/cancel UI yet (`purchases.cancel` permission exists, unused)
+- Supplier now has a real detail page with edit/archive (Phase 14 polish
+  pass) — previously suppliers were list-only with no detail route at all
 - No supplier balance report — the outstanding-per-PO figure exists, but
   nothing rolls it up across all of a supplier's purchase orders yet
 - `RETURN` exists as an `InventoryMovementType` value but nothing creates
@@ -1008,10 +1030,10 @@ code that doesn't match `src/lib/db.ts`.
 - No industry-pack auto-seeding of default custom fields — an Owner has to
   define fields by hand today; that seeding mechanism is deferred until
   Phase 11/12 actually exist to seed something (see "Industry Engine")
-- No vehicle edit UI yet (create/archive only, matching the prevailing
-  create-first pattern); no reminder system for upcoming service (e.g.
-  mileage/time-based service due alerts) — real but out of scope until a
-  concrete need for it shows up
+- Vehicle edit UI is real (UI completeness pass; the action existed since
+  Phase 11 but had no form wired to it); no reminder system for upcoming
+  service (e.g. mileage/time-based service due alerts) — real but out of
+  scope until a concrete need for it shows up
 - `vehicles.*` cross-role enforcement is verified at the permission
   catalog and UI-gate level only, same standing caveat as other
   manager-only/employee-scoped gates
@@ -1046,5 +1068,6 @@ Phase 5: Suppliers/Purchasing. Phase 6: Sales/Orders. Phase 7:
 Invoices/Payments. Phase 8: Expenses/Financial reporting. Phase 9:
 Employees/Tasks/Workflows/Notifications. Phase 10: Industry Engine.
 Phase 11: Automobile Workshop (first deep industry module). Phase 12:
-Clothing/Retail. Phase 13: AI Business Intelligence. Phase 14: Additional
-industry packs.
+Clothing/Retail. Phase 13: AI Business Intelligence. Between 13 and 14: a
+UI completeness pass (edit/archive for Customer/Product/Supplier/Vehicle),
+not a numbered phase. Phase 14: Additional industry packs.

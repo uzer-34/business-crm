@@ -18,6 +18,8 @@ export const createProductSchema = z.object({
 
 export type CreateProductInput = z.infer<typeof createProductSchema>;
 
+export const editProductSchema = createProductSchema;
+
 export const createVariantSchema = z.object({
   sku: z.string().trim().min(1).max(64),
   attributes: z.record(z.string().min(1).max(40), z.string().min(1).max(80)).refine((obj) => Object.keys(obj).length > 0, {

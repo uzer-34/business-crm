@@ -13,6 +13,8 @@ export const createSupplierSchema = z.object({
 
 export type CreateSupplierInput = z.infer<typeof createSupplierSchema>;
 
+export const editSupplierSchema = createSupplierSchema;
+
 const purchaseOrderItemSchema = z.object({
   productId: z.string().min(1),
   variantId: z.string().optional(),

@@ -7,6 +7,7 @@ import { getTerminology } from "@/lib/industry/terminology";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatMoney } from "@/lib/format";
 import { ArchiveVehicleButton } from "./archive-vehicle-button";
+import { EditVehicleForm } from "./edit-vehicle-form";
 
 const STATUS_LABEL: Record<string, string> = {
   PENDING: "Pending",
@@ -51,7 +52,21 @@ export default async function VehiclePage({ params }: PageProps<"/vehicles/[id]"
               {vehicle.vin && ` · VIN ${vehicle.vin}`}
             </p>
           </div>
-          {ctx.permissions.has("vehicles.archive") && <ArchiveVehicleButton vehicleId={vehicle.id} />}
+          <div className="flex gap-2">
+            {ctx.permissions.has("vehicles.edit") && (
+              <EditVehicleForm
+                vehicleId={vehicle.id}
+                initial={{
+                  make: vehicle.make,
+                  model: vehicle.model,
+                  year: vehicle.year,
+                  plateNumber: vehicle.plateNumber,
+                  vin: vehicle.vin,
+                }}
+              />
+            )}
+            {ctx.permissions.has("vehicles.archive") && <ArchiveVehicleButton vehicleId={vehicle.id} />}
+          </div>
         </CardContent>
       </Card>
 

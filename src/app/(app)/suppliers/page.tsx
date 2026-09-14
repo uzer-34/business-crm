@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { db } from "@/lib/db";
 import { getDefaultMembershipOrRedirect } from "@/lib/organization/actions";
 import { Card, CardContent } from "@/components/ui/card";
@@ -33,19 +34,21 @@ export default async function SuppliersPage() {
       ) : (
         <RevealOnScroll className="flex flex-col gap-3">
           {suppliers.map((supplier) => (
-            <HoverLift key={supplier.id}>
-              <Card>
-                <CardContent className="flex items-center justify-between p-4">
-                  <div>
-                    <p className="font-medium">{supplier.name}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {[supplier.contactName, supplier.email, supplier.phone].filter(Boolean).join(" · ") ||
-                        "No contact info"}
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-            </HoverLift>
+            <Link key={supplier.id} href={`/suppliers/${supplier.id}`}>
+              <HoverLift>
+                <Card>
+                  <CardContent className="flex items-center justify-between p-4">
+                    <div>
+                      <p className="font-medium">{supplier.name}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {[supplier.contactName, supplier.email, supplier.phone].filter(Boolean).join(" · ") ||
+                          "No contact info"}
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              </HoverLift>
+            </Link>
           ))}
         </RevealOnScroll>
       )}
