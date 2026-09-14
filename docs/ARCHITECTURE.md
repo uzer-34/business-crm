@@ -733,16 +733,26 @@ two honestly-separated halves.
   seeded all the way back in Phase 1 and, until now, only powered one
   small card on the Expenses page.
 - **The AI half only ever does real work or says so — never both-neither.**
-  `generateBusinessSummaryAction` checks for `ANTHROPIC_API_KEY` in the
-  environment first. If it's not set, it returns a plain "AI insights are
-  not configured" result — not a fabricated paragraph pretending to be
-  model output. If it *is* set, it sends the exact same real analytics
-  data computed above to the Anthropic API (`@anthropic-ai/sdk`,
+  `generateBusinessSummaryAction` checks for `GEMINI_API_KEY` first, then
+  `ANTHROPIC_API_KEY`, and calls whichever is set (Gemini wins if both
+  are). If neither is set, it returns a plain "AI insights are not
+  configured" result naming both env vars — not a fabricated paragraph
+  pretending to be model output. If a key *is* set, it sends the exact
+  same real analytics data computed above to that provider's real API
+  (`@google/genai`, `gemini-2.5-flash`, or `@anthropic-ai/sdk`,
   `claude-sonnet-5`) and returns whatever the model actually says, or the
   real error if the call fails — never a fallback canned response papering
   over a broken integration. This is the only honest shape "AI insights"
   can take without either lying about a missing key or lying about a
   failed call.
+- **Gemini first, deliberately.** Google's Gemini API has a standing free
+  tier (not a time-boxed trial, unlike Anthropic/OpenAI's one-time trial
+  credits) — an org can turn this feature on at zero cost with a key from
+  Google AI Studio. `ANTHROPIC_API_KEY` stays supported as a second option
+  for an org that already has one and would rather use it (the two
+  provider calls are two small functions, `callGemini`/`callAnthropic`,
+  behind the same not-configured/real-call/real-error contract — adding a
+  third provider later is the same shape again, not a redesign).
 - **Generated on demand, not on page load.** The Reports page renders a
   "Generate insights" button rather than calling the AI action
   automatically — a page view should never silently spend API budget the
@@ -751,14 +761,16 @@ two honestly-separated halves.
   order, its invoice, a categorized expense) to produce non-trivial
   numbers, and confirmed the Reports page's revenue/top-customer/
   top-product/expense figures matched what those actions actually
-  produced. Confirmed the AI section's honest behavior at both ends: with
-  no `ANTHROPIC_API_KEY` set (this dev environment's actual, expected
-  state), clicking "Generate insights" showed the plain not-configured
-  message; with a syntactically-valid-but-wrong key set for one
-  verification pass, it made a real network call to Anthropic's API and
-  surfaced that API's own real authentication error — proving the
-  integration genuinely calls the network rather than short-circuiting
-  to a fake response, in both the configured and unconfigured states.
+  produced. Confirmed the AI section's honest behavior at both ends, for
+  both providers: with no key of either kind set (this dev environment's
+  actual, expected state), clicking "Generate insights" showed the plain
+  not-configured message naming both env vars; with a
+  syntactically-valid-but-wrong key set for one verification pass each,
+  it made a real network call to Google's Gemini API and, separately, to
+  Anthropic's API, surfacing each provider's own real authentication error
+  — proving the integration genuinely calls the network for either
+  provider rather than short-circuiting to a fake response, in both the
+  configured and unconfigured states.
 
 ## Motion (hover + scroll)
 
@@ -1007,9 +1019,10 @@ code that doesn't match `src/lib/db.ts`.
   matching the prevailing pattern); no variant archiving either
 - `sales.return` cross-role enforcement is verified at the permission
   catalog and UI-gate level only, same standing caveat as above
-- No `ANTHROPIC_API_KEY` is configured for this deployment's environment,
-  so the AI Summary feature is real but dormant until an operator sets
-  one — this is expected, not a bug (see "AI Business Intelligence" above)
+- No `GEMINI_API_KEY` or `ANTHROPIC_API_KEY` is configured for this
+  deployment's environment, so the AI Summary feature is real but dormant
+  until an operator sets one (Gemini's is free — see "AI Business
+  Intelligence" above) — this is expected, not a bug
 - The Reports page has no date-range picker (fixed 6-month/30-day windows)
   and no export; real but intentionally minimal, same reasoning as the
   Expenses page's financial summary card
