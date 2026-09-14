@@ -20,7 +20,8 @@ export default async function CustomerPage({ params }: PageProps<"/customers/[id
   const ctx = await loadTenantContext(user.id, customer.organizationId);
   if (!ctx) notFound();
 
-  const [notesRaw, tasksRaw, activitiesRaw, membersRaw, ordersRaw, invoicesRaw] = await Promise.all([
+  const [notesRaw, tasksRaw, activitiesRaw, membersRaw, ordersRaw, invoicesRaw, customFieldDefs, customFieldValues] =
+    await Promise.all([
     db.note.findMany({
       where: { customerId: id },
       include: { author: true },
@@ -49,6 +50,11 @@ export default async function CustomerPage({ params }: PageProps<"/customers/[id
       where: { customerId: id },
       orderBy: { createdAt: "desc" },
     }),
+    db.customFieldDefinition.findMany({
+      where: { organizationId: ctx.organizationId, entityType: "CUSTOMER", archivedAt: null },
+      orderBy: { createdAt: "asc" },
+    }),
+    db.customFieldValue.findMany({ where: { entityId: id } }),
   ]);
 
   const notes = notesRaw.map((n) => ({
@@ -94,6 +100,16 @@ export default async function CustomerPage({ params }: PageProps<"/customers/[id
     total: inv.total.toString(),
   }));
 
+  const valueByDefinitionId = new Map(customFieldValues.map((v) => [v.definitionId, v.value]));
+  const customFields = customFieldDefs.map((f) => ({
+    id: f.id,
+    label: f.label,
+    fieldType: f.fieldType,
+    options: (f.options as string[] | null) ?? null,
+    required: f.required,
+    value: (valueByDefinitionId.get(f.id) ?? null) as string | number | boolean | null,
+  }));
+
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
       <Card>
@@ -111,6 +127,7 @@ export default async function CustomerPage({ params }: PageProps<"/customers/[id
       </Card>
 
       <CustomerDetail
+        organizationId={customer.organizationId}
         customerId={customer.id}
         assignedToId={customer.assignedToId}
         members={members}
@@ -119,6 +136,7 @@ export default async function CustomerPage({ params }: PageProps<"/customers/[id
         activities={activities}
         orders={orders}
         invoices={invoices}
+        customFields={customFields}
         currencyCode={customer.organization.currencyCode}
         locale={customer.organization.locale}
         canAssign={ctx.permissions.has("customers.assign")}

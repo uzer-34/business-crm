@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { getDefaultMembershipOrRedirect } from "@/lib/organization/actions";
+import { getTerminology } from "@/lib/industry/terminology";
 import { Card, CardContent } from "@/components/ui/card";
 import { RevealOnScroll } from "@/components/motion/reveal-on-scroll";
 import { HoverLift } from "@/components/motion/hover-lift";
@@ -20,28 +21,44 @@ const STATUS_CLASS: Record<string, string> = {
 
 export default async function CustomersPage() {
   const { membership } = await getDefaultMembershipOrRedirect();
+  const term = getTerminology(membership.organization.industryKey);
 
-  const customers = await db.customer.findMany({
-    where: { organizationId: membership.organizationId, archivedAt: null },
-    include: { assignedTo: { include: { user: true } } },
-    orderBy: { createdAt: "desc" },
-    take: 100,
-  });
+  const [customers, customFieldDefs] = await Promise.all([
+    db.customer.findMany({
+      where: { organizationId: membership.organizationId, archivedAt: null },
+      include: { assignedTo: { include: { user: true } } },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    }),
+    db.customFieldDefinition.findMany({
+      where: { organizationId: membership.organizationId, entityType: "CUSTOMER", archivedAt: null },
+      orderBy: { createdAt: "asc" },
+    }),
+  ]);
+
+  const customFields = customFieldDefs.map((f) => ({
+    id: f.id,
+    key: f.key,
+    label: f.label,
+    fieldType: f.fieldType,
+    options: (f.options as string[] | null) ?? null,
+    required: f.required,
+  }));
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Customers</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{term.customers}</h1>
           <p className="text-sm text-muted-foreground">{customers.length} total</p>
         </div>
-        <NewCustomerForm organizationId={membership.organizationId} />
+        <NewCustomerForm organizationId={membership.organizationId} customFields={customFields} />
       </div>
 
       {customers.length === 0 ? (
         <Card>
           <CardContent className="py-16 text-center text-sm text-muted-foreground">
-            No customers yet. Add your first one to start building activity history.
+            No {term.customers.toLowerCase()} yet. Add your first one to start building activity history.
           </CardContent>
         </Card>
       ) : (

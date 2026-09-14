@@ -527,6 +527,79 @@ way to add a second person to an organization — and gives the Task model
   this phase needed it yet, and the invite flow only ever assigns one of
   the three fixed system roles.
 
+## Industry Engine (Phase 10)
+
+This is where "generic core + industry intelligence" (the architecture
+principle stated at the top of this document) stops being a slogan and
+becomes real code. The roadmap calls this phase "Industry Engine," but
+deliberately does **not** mean industry-specific business modules — those
+are Phase 11 (Automobile Workshop) and Phase 12 (Clothing/Retail). What
+this phase builds instead is the two generic mechanisms those later phases
+will build on:
+
+- **A terminology engine** (`src/lib/industry/terminology.ts`). The
+  underlying `Customer`/`Order` models never change — only what a handful
+  of nav labels and page headers call them. `getTerminology(industryKey)`
+  returns a small `Record<TermKey, string>` (currently just
+  customer/customers/order/orders), defaulting to plain English and
+  overridden per industry only where the generic noun would genuinely read
+  strangely to that trade — an automobile workshop or repair shop calls an
+  Order a "Job Card"; a salon calls a Customer a "Client"; a clinic calls
+  one a "Patient"; a restaurant calls one a "Guest". Most of the
+  `INDUSTRIES` list from Phase 1's stub (jewellery, electronics retail,
+  furniture, distributor, professional services, construction, ...)
+  intentionally has **no** entry here — "Customer"/"Order" already reads
+  fine for them, and adding an override nobody asked for is exactly what
+  brief §45 says not to do. Wired into the sidebar nav, the
+  Customers/Orders page headers, and the dashboard's stat tile — verified
+  live: switching an org from "generic" to "automobile_workshop" changed
+  "Orders" to "Job Cards" everywhere immediately, while "Customers"
+  correctly stayed as-is (no override defined for that industry).
+- **A generic custom-fields framework** (`CustomFieldDefinition` +
+  `CustomFieldValue`). Rather than adding a `vehiclePlateNumber` column to
+  `Customer` for one industry, an org can define its own fields per entity
+  type. `CustomFieldValue.entityId` is polymorphic (a free-standing id, not
+  a real FK) — the same tradeoff Activity's `subjectId` already made in
+  Phase 2, for the same reason: one physical table can't cleanly FK to
+  every possible entity table. `CustomFieldEntityType` deliberately starts
+  with only `CUSTOMER` — the one entity this phase wires all the way
+  through (definition management in Settings, dynamic rendering in the
+  create form, display + inline editing on Customer 360) to prove the
+  mechanism actually works before anything else depends on it. Adding
+  `ORDER` or a Phase-11-specific entity later is one additive enum value,
+  not a redesign.
+- **Definitions are seeded by a person, not a "pack" system, for now.**
+  The comment in the schema notes that Phase 11/12's industry packs are
+  expected to eventually *auto-seed* sensible default fields for their
+  vertical (a workshop org getting "Vehicle plate number" for free rather
+  than an owner typing it in) — building that seeding mechanism now, before
+  those packs exist to seed anything, would be the same "designing an
+  abstraction with no real consumer" mistake Phase 9 already called out for
+  a workflow engine. So for this phase, defining fields is a manual,
+  Owner-only action on the new **Settings** page.
+- **`organization.manage`** (seeded since Phase 1, unused until now) gates
+  both the industry switch and custom-field definition management — a
+  structural decision about what the business tracks belongs with the
+  Owner, not Manager, even though Manager already holds several other
+  "manage"-shaped permissions elsewhere. *Setting a value* on an existing
+  field, by contrast, uses whatever permission already governs editing
+  that entity (`customers.edit` for Customer) — that's ordinary data entry,
+  not a structural change, so it stays governed by the existing lower bar.
+- No org existed with a way to change its industry after onboarding until
+  this phase — the Settings page's industry selector closes that gap
+  incidentally while giving the terminology engine something to switch.
+- Verified in a real browser end-to-end: created an org as "generic",
+  confirmed plain "Customers"/"Orders" everywhere, switched industry to
+  "automobile_workshop" via Settings, confirmed the nav and Orders page
+  header changed to "Job Cards" live (no re-login needed — it's just a
+  server component re-render), defined a TEXT field ("Vehicle plate
+  number") and a SELECT field ("Vehicle type": Sedan/SUV/Truck), created a
+  customer filling both in, and confirmed the values round-tripped through
+  Postgres and displayed correctly (and editably) on Customer 360.
+  `organization.manage` being Owner-only is verified at the permission
+  catalog level, same standing caveat as other manager-only gates until a
+  cheap way to spin up a second membership inline exists for every check.
+
 ## Motion (hover + scroll)
 
 GSAP (`gsap`, `@gsap/react`) provides the product's hover and scroll
@@ -659,6 +732,20 @@ code that doesn't match `src/lib/db.ts`.
 - The project's first live two-membership cross-role browser test,
   closing verification gaps left open since Phases 4, 7, and 8
 
+**Phase 10 — Industry Engine**
+- A terminology engine — per-industry label overrides for a small set of
+  nouns (Customer/Order today), wired into nav, page headers, and the
+  dashboard, with most industries intentionally left at plain English
+- A generic custom-fields framework (`CustomFieldDefinition`/
+  `CustomFieldValue`), proven end-to-end on Customer: definition management
+  on a new Settings page, dynamic rendering in the create form, and
+  display + inline editing on Customer 360
+- A Settings page (`/settings`, Owner-only via `organization.manage`) that
+  also finally lets an org change its industry after onboarding
+- Industry-specific business modules (Vehicle tracking, garment variants,
+  etc.) are explicitly Phase 11/12's job, not this phase's — see that
+  section above for why
+
 ## Known gaps / deliberately not built yet
 
 - No organization switcher — a user with multiple orgs always lands on the
@@ -673,7 +760,9 @@ code that doesn't match `src/lib/db.ts`.
   applied to Customer reads/writes
 - No customer edit/archive UI yet (create + assign only); no search/filter
   on the customer list beyond the default sort
-- Notes/Tasks have no dedicated permission keys — see "Customer 360" above
+- Notes and customer-scoped Tasks still ride on `customers.edit` rather
+  than their own permission keys (standalone tasks got real `tasks.*`
+  keys in Phase 9; customer-linked ones weren't revisited)
 - No product/service edit or archive UI yet (create-only, matching the
   Customer/Branch pattern so far); no dedicated Category management screen
 - No per-product movement history page — the inventory page shows the last
@@ -701,8 +790,13 @@ code that doesn't match `src/lib/db.ts`.
 - Notifications have no per-type user preferences and no "notify me on X"
   triggers beyond task/customer assignment — real but minimal, same
   reasoning as the financial summary card
-- The Industry Engine, AI Business Intelligence — later phases per the
-  roadmap, not started
+- Custom fields only exist for Customer (`CustomFieldEntityType` has one
+  value); no bulk import/export of custom field values; definitions can be
+  archived but not renamed or reordered
+- No industry-pack auto-seeding of default custom fields — an Owner has to
+  define fields by hand today; that seeding mechanism is deferred until
+  Phase 11/12 actually exist to seed something (see "Industry Engine")
+- AI Business Intelligence — a later phase per the roadmap, not started
 - Rate limiting is DB-query based, not a dedicated store; fine for now, but
   the first thing to revisit if abuse patterns show up in production traffic
 

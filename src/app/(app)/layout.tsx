@@ -3,26 +3,29 @@ import Link from "next/link";
 import { db } from "@/lib/db";
 import { getDefaultMembershipOrRedirect } from "@/lib/organization/actions";
 import { logoutAction } from "@/lib/auth/actions";
+import { getTerminology } from "@/lib/industry/terminology";
 import { NotificationBell } from "./notification-bell";
-
-const NAV_ITEMS = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/customers", label: "Customers" },
-  { href: "/tasks", label: "Tasks" },
-  { href: "/orders", label: "Orders" },
-  { href: "/invoices", label: "Invoices" },
-  { href: "/expenses", label: "Expenses" },
-  { href: "/products", label: "Products" },
-  { href: "/services", label: "Services" },
-  { href: "/inventory", label: "Inventory" },
-  { href: "/suppliers", label: "Suppliers" },
-  { href: "/purchase-orders", label: "Purchase Orders" },
-  { href: "/employees", label: "Employees" },
-  { href: "/branches", label: "Branches" },
-];
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const { user, membership } = await getDefaultMembershipOrRedirect();
+
+  const term = getTerminology(membership.organization.industryKey);
+  const NAV_ITEMS = [
+    { href: "/dashboard", label: "Dashboard" },
+    { href: "/customers", label: term.customers },
+    { href: "/tasks", label: "Tasks" },
+    { href: "/orders", label: term.orders },
+    { href: "/invoices", label: "Invoices" },
+    { href: "/expenses", label: "Expenses" },
+    { href: "/products", label: "Products" },
+    { href: "/services", label: "Services" },
+    { href: "/inventory", label: "Inventory" },
+    { href: "/suppliers", label: "Suppliers" },
+    { href: "/purchase-orders", label: "Purchase Orders" },
+    { href: "/employees", label: "Employees" },
+    { href: "/branches", label: "Branches" },
+    { href: "/settings", label: "Settings" },
+  ];
 
   const notificationRows = await db.notification.findMany({
     where: { membershipId: membership.id },

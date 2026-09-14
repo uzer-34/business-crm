@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { getDefaultMembershipOrRedirect } from "@/lib/organization/actions";
+import { getTerminology } from "@/lib/industry/terminology";
 import { Card, CardContent } from "@/components/ui/card";
 import { RevealOnScroll } from "@/components/motion/reveal-on-scroll";
 import { HoverLift } from "@/components/motion/hover-lift";
@@ -22,6 +23,7 @@ const PAYMENT_LABEL: Record<string, string> = {
 export default async function OrdersPage() {
   const { membership } = await getDefaultMembershipOrRedirect();
   const { organization } = membership;
+  const term = getTerminology(organization.industryKey);
 
   const orders = await db.order.findMany({
     where: { organizationId: organization.id },
@@ -34,20 +36,22 @@ export default async function OrdersPage() {
     <div className="mx-auto flex max-w-4xl flex-col gap-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Orders</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{term.orders}</h1>
           <p className="text-sm text-muted-foreground">{orders.length} total</p>
         </div>
         <Link
           href="/orders/new"
           className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90"
         >
-          New order
+          New {term.order.toLowerCase()}
         </Link>
       </div>
 
       {orders.length === 0 ? (
         <Card>
-          <CardContent className="py-16 text-center text-sm text-muted-foreground">No orders yet.</CardContent>
+          <CardContent className="py-16 text-center text-sm text-muted-foreground">
+            No {term.orders.toLowerCase()} yet.
+          </CardContent>
         </Card>
       ) : (
         <RevealOnScroll className="flex flex-col gap-3">

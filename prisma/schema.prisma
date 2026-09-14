@@ -136,6 +136,7 @@ model Organization {
   payments           Payment[]
   expenses           Expense[]
   notifications      Notification[]
+  customFieldDefinitions CustomFieldDefinition[]
 
   @@map("organizations")
 }
@@ -971,6 +972,74 @@ model Notification {
 
   @@index([membershipId, readAt, createdAt])
   @@map("notifications")
+}
+
+// ---------------------------------------------------------------------------
+// Industry Engine (Phase 10) — the "generic core + industry intelligence"
+// principle in schema form. Rather than adding industry-specific columns to
+// Customer/Product/etc. (which would mean a migration for every vertical),
+// an org can define its own fields per entity type here. Phase 11/12's
+// industry packs are expected to seed sensible default definitions for their
+// vertical (e.g. a workshop org getting a "Vehicle plate number" field on
+// Customer automatically) rather than making the owner configure everything
+// by hand — that seeding is out of scope until those phases actually exist.
+// ---------------------------------------------------------------------------
+
+// Deliberately starts with just CUSTOMER — the one entity this phase wires
+// end-to-end. Add values as later phases give other entities real custom
+// fields; adding an enum value is a additive, low-risk migration.
+enum CustomFieldEntityType {
+  CUSTOMER
+}
+
+enum CustomFieldType {
+  TEXT
+  NUMBER
+  DATE
+  BOOLEAN
+  SELECT
+}
+
+model CustomFieldDefinition {
+  id             String                @id @default(cuid())
+  organizationId String
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  entityType     CustomFieldEntityType
+  // Stable, URL/DB-safe key (e.g. "vehicle_plate_number"); label is what's
+  // actually shown and can be edited without touching stored values.
+  key            String
+  label          String
+  fieldType      CustomFieldType
+  // Option labels for fieldType SELECT; unused (and ignored) otherwise.
+  options        Json?
+  required       Boolean               @default(false)
+  archivedAt     DateTime?             @db.Timestamptz(3)
+  createdAt      DateTime              @default(now()) @db.Timestamptz(3)
+
+  values CustomFieldValue[]
+
+  @@unique([organizationId, entityType, key])
+  @@index([organizationId, entityType, archivedAt])
+  @@map("custom_field_definitions")
+}
+
+// Polymorphic on purpose (entityId is a free-standing id, not a real FK) —
+// same "subjectId" pattern Activity already uses, since a single value table
+// FK-ing to every possible entity table isn't practical in Postgres. The
+// (definitionId, entityType) already scopes this to one real table via the
+// definition, so the lack of a DB-level FK on entityId is an accepted
+// tradeoff, not an oversight.
+model CustomFieldValue {
+  id           String                @id @default(cuid())
+  definitionId String
+  definition   CustomFieldDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+  entityId     String
+  value        Json
+  updatedAt    DateTime              @updatedAt @db.Timestamptz(3)
+
+  @@unique([definitionId, entityId])
+  @@index([entityId])
+  @@map("custom_field_values")
 }
 
 model AuditLog {

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { getDefaultMembershipOrRedirect } from "@/lib/organization/actions";
+import { getTerminology } from "@/lib/industry/terminology";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { StaggerIn } from "@/components/motion/stagger-in";
 import { HoverLift } from "@/components/motion/hover-lift";
@@ -71,8 +72,9 @@ export default async function DashboardPage() {
       loadOutstandingInvoices(membership.organizationId),
     ]);
 
+  const term = getTerminology(membership.organization.industryKey);
   const stats = [
-    { label: "Customers", value: customerCount },
+    { label: term.customers, value: customerCount },
     { label: "Products", value: productCount },
     { label: "Branches", value: branchCount },
     { label: "Team members", value: employeeCount },

@@ -10,6 +10,7 @@ import { RevealOnScroll } from "@/components/motion/reveal-on-scroll";
 import { assignCustomerAction } from "@/lib/customer/actions";
 import { addNoteAction } from "@/lib/customer/notes-actions";
 import { createTaskAction, completeTaskAction } from "@/lib/customer/tasks-actions";
+import { setCustomFieldValueAction } from "@/lib/industry/custom-field-actions";
 
 type Membership = { id: string; label: string };
 type Note = { id: string; body: string; createdAt: string; authorName: string };
@@ -23,11 +24,20 @@ type Task = {
 type ActivityItem = { id: string; type: string; createdAt: string; actorName: string | null; summary: string };
 type OrderSummary = { id: string; orderNumber: string; status: string; total: string };
 type InvoiceSummary = { id: string; invoiceNumber: string; status: string; paymentStatus: string; total: string };
+type CustomFieldSummary = {
+  id: string;
+  label: string;
+  fieldType: "TEXT" | "NUMBER" | "DATE" | "BOOLEAN" | "SELECT";
+  options: string[] | null;
+  required: boolean;
+  value: string | number | boolean | null;
+};
 
 const TABS = ["Overview", "Activity", "Notes", "Tasks", "Orders", "Invoices"] as const;
 type Tab = (typeof TABS)[number];
 
 export function CustomerDetail({
+  organizationId,
   customerId,
   assignedToId,
   members,
@@ -36,11 +46,13 @@ export function CustomerDetail({
   activities,
   orders,
   invoices,
+  customFields,
   currencyCode,
   locale,
   canAssign,
   canEdit,
 }: {
+  organizationId: string;
   customerId: string;
   assignedToId: string | null;
   members: Membership[];
@@ -49,6 +61,7 @@ export function CustomerDetail({
   activities: ActivityItem[];
   orders: OrderSummary[];
   invoices: InvoiceSummary[];
+  customFields: CustomFieldSummary[];
   currencyCode: string;
   locale: string;
   canAssign: boolean;
@@ -94,6 +107,9 @@ export function CustomerDetail({
                   ))}
                 </select>
               </div>
+            )}
+            {customFields.length > 0 && (
+              <CustomFieldsSection organizationId={organizationId} customerId={customerId} fields={customFields} canEdit={canEdit} />
             )}
             <RecentActivity activities={activities.slice(0, 5)} />
           </CardContent>
@@ -197,6 +213,96 @@ function OrdersTab({
       )}
     </div>
   );
+}
+
+function CustomFieldsSection({
+  organizationId,
+  customerId,
+  fields,
+  canEdit,
+}: {
+  organizationId: string;
+  customerId: string;
+  fields: CustomFieldSummary[];
+  canEdit: boolean;
+}) {
+  const router = useRouter();
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save(field: CustomFieldSummary, raw: string | boolean) {
+    setError(null);
+    setPendingId(field.id);
+    const value = field.fieldType === "NUMBER" && raw !== "" ? Number(raw) : raw === "" ? null : raw;
+    const result = await setCustomFieldValueAction(organizationId, {
+      definitionId: field.id,
+      entityId: customerId,
+      value,
+    });
+    setPendingId(null);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    router.refresh();
+  }
+
+  return (
+    <div className="flex flex-col gap-3 border-t border-border pt-4">
+      <p className="text-sm font-medium">Custom fields</p>
+      {error && <p className="text-sm text-danger">{error}</p>}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {fields.map((field) => (
+          <div key={field.id} className="flex flex-col gap-1.5">
+            <label htmlFor={`view-custom-${field.id}`} className="text-sm text-muted-foreground">
+              {field.label}
+              {field.required && " *"}
+            </label>
+            {!canEdit ? (
+              <p className="text-sm">{formatFieldValue(field)}</p>
+            ) : field.fieldType === "BOOLEAN" ? (
+              <input
+                id={`view-custom-${field.id}`}
+                type="checkbox"
+                defaultChecked={field.value === true}
+                disabled={pendingId === field.id}
+                onChange={(e) => void save(field, e.target.checked)}
+              />
+            ) : field.fieldType === "SELECT" ? (
+              <select
+                id={`view-custom-${field.id}`}
+                defaultValue={(field.value as string) ?? ""}
+                disabled={pendingId === field.id}
+                onChange={(e) => void save(field, e.target.value)}
+                className="h-10 rounded-md border border-border bg-card px-3 text-sm"
+              >
+                <option value="">—</option>
+                {(field.options ?? []).map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <Input
+                id={`view-custom-${field.id}`}
+                type={field.fieldType === "NUMBER" ? "number" : field.fieldType === "DATE" ? "date" : "text"}
+                defaultValue={field.value != null ? String(field.value) : ""}
+                disabled={pendingId === field.id}
+                onBlur={(e) => void save(field, e.target.value)}
+              />
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function formatFieldValue(field: CustomFieldSummary): string {
+  if (field.value === null || field.value === undefined) return "—";
+  if (field.fieldType === "BOOLEAN") return field.value ? "Yes" : "No";
+  return String(field.value);
 }
 
 function RecentActivity({ activities }: { activities: ActivityItem[] }) {

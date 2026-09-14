@@ -6,14 +6,31 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { createCustomerAction } from "@/lib/customer/actions";
+import { setCustomFieldValueAction } from "@/lib/industry/custom-field-actions";
 
-export function NewCustomerForm({ organizationId }: { organizationId: string }) {
+type CustomFieldDefinition = {
+  id: string;
+  key: string;
+  label: string;
+  fieldType: "TEXT" | "NUMBER" | "DATE" | "BOOLEAN" | "SELECT";
+  options: string[] | null;
+  required: boolean;
+};
+
+export function NewCustomerForm({
+  organizationId,
+  customFields = [],
+}: {
+  organizationId: string;
+  customFields?: CustomFieldDefinition[];
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [type, setType] = useState<"INDIVIDUAL" | "BUSINESS">("INDIVIDUAL");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [fieldValues, setFieldValues] = useState<Record<string, string | boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -41,6 +58,18 @@ export function NewCustomerForm({ organizationId }: { organizationId: string }) 
               setError(result.error);
               return;
             }
+
+            for (const field of customFields) {
+              const raw = fieldValues[field.id];
+              if (raw === undefined || raw === "") continue;
+              const value = field.fieldType === "NUMBER" ? Number(raw) : raw;
+              await setCustomFieldValueAction(organizationId, {
+                definitionId: field.id,
+                entityId: result.data.customerId,
+                value,
+              });
+            }
+
             setOpen(false);
             router.push(`/customers/${result.data.customerId}`);
           });
@@ -75,6 +104,48 @@ export function NewCustomerForm({ organizationId }: { organizationId: string }) 
           <Label htmlFor="customer-phone">Phone</Label>
           <Input id="customer-phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
         </div>
+
+        {customFields.map((field) => (
+          <div key={field.id} className="flex flex-col gap-1.5">
+            <Label htmlFor={`custom-${field.id}`}>
+              {field.label}
+              {field.required && " *"}
+            </Label>
+            {field.fieldType === "BOOLEAN" ? (
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  id={`custom-${field.id}`}
+                  type="checkbox"
+                  checked={Boolean(fieldValues[field.id])}
+                  onChange={(e) => setFieldValues((prev) => ({ ...prev, [field.id]: e.target.checked }))}
+                />
+                Yes
+              </label>
+            ) : field.fieldType === "SELECT" ? (
+              <select
+                id={`custom-${field.id}`}
+                value={(fieldValues[field.id] as string) ?? ""}
+                onChange={(e) => setFieldValues((prev) => ({ ...prev, [field.id]: e.target.value }))}
+                className="h-10 rounded-md border border-border bg-card px-3 text-sm"
+              >
+                <option value="">Select…</option>
+                {(field.options ?? []).map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <Input
+                id={`custom-${field.id}`}
+                type={field.fieldType === "NUMBER" ? "number" : field.fieldType === "DATE" ? "date" : "text"}
+                value={(fieldValues[field.id] as string) ?? ""}
+                onChange={(e) => setFieldValues((prev) => ({ ...prev, [field.id]: e.target.value }))}
+                required={field.required}
+              />
+            )}
+          </div>
+        ))}
 
         {error && <p className="text-sm text-danger">{error}</p>}
 

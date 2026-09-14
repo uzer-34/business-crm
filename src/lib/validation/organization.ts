@@ -17,6 +17,10 @@ export const createOrganizationSchema = z.object({
 
 export type CreateOrganizationInput = z.infer<typeof createOrganizationSchema>;
 
+export const changeIndustrySchema = z.object({
+  industryKey: z.string().refine(isIndustryKey, "Unknown industry"),
+});
+
 function isValidTimezone(value: string): boolean {
   try {
     Intl.DateTimeFormat(undefined, { timeZone: value });
