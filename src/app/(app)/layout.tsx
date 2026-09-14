@@ -19,6 +19,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     ...(tracksVehicles(membership.organization.industryKey) ? [{ href: "/vehicles", label: "Vehicles" }] : []),
     { href: "/invoices", label: "Invoices" },
     { href: "/expenses", label: "Expenses" },
+    { href: "/reports", label: "Reports" },
     { href: "/products", label: "Products" },
     { href: "/services", label: "Services" },
     { href: "/inventory", label: "Inventory" },

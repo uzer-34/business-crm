@@ -712,6 +712,54 @@ that's been sitting in the schema since Phase 4.
   proving the real guard lives in `processReturnAction`, not just in the
   form's UI.
 
+## AI Business Intelligence (Phase 13)
+
+This phase's name invites a specific mistake: building an "AI" feature
+that's really just canned text dressed up as a model's output. Brief §45
+("don't fake it") rules that out explicitly, so this phase is split into
+two honestly-separated halves.
+
+- **Real analytics, no AI required for this half.** `src/lib/analytics/
+  reports.ts` computes four real things from data that already exists —
+  a 6-month revenue trend (from issued Invoices), top 5 customers by
+  revenue, top 5 products by units fulfilled, and an expense breakdown by
+  category over the last 30 days — all via Prisma aggregation
+  (`groupBy`/`_sum`) or, where Prisma can't express a truncated-by-month
+  grouping, the same "fetch the range, bucket in JS" approach the
+  dashboard's `loadLowStock` already established in Phase 2. This is
+  "business intelligence" in the plain sense — real numbers, correctly
+  computed — and needed no AI at all. It's the new `/reports` page,
+  gated by the `reports.sales`/`reports.financial` permissions that were
+  seeded all the way back in Phase 1 and, until now, only powered one
+  small card on the Expenses page.
+- **The AI half only ever does real work or says so — never both-neither.**
+  `generateBusinessSummaryAction` checks for `ANTHROPIC_API_KEY` in the
+  environment first. If it's not set, it returns a plain "AI insights are
+  not configured" result — not a fabricated paragraph pretending to be
+  model output. If it *is* set, it sends the exact same real analytics
+  data computed above to the Anthropic API (`@anthropic-ai/sdk`,
+  `claude-sonnet-5`) and returns whatever the model actually says, or the
+  real error if the call fails — never a fallback canned response papering
+  over a broken integration. This is the only honest shape "AI insights"
+  can take without either lying about a missing key or lying about a
+  failed call.
+- **Generated on demand, not on page load.** The Reports page renders a
+  "Generate insights" button rather than calling the AI action
+  automatically — a page view should never silently spend API budget the
+  org didn't ask to spend in that moment.
+- Verified in a real browser: created enough real activity (a fulfilled
+  order, its invoice, a categorized expense) to produce non-trivial
+  numbers, and confirmed the Reports page's revenue/top-customer/
+  top-product/expense figures matched what those actions actually
+  produced. Confirmed the AI section's honest behavior at both ends: with
+  no `ANTHROPIC_API_KEY` set (this dev environment's actual, expected
+  state), clicking "Generate insights" showed the plain not-configured
+  message; with a syntactically-valid-but-wrong key set for one
+  verification pass, it made a real network call to Anthropic's API and
+  surfaced that API's own real authentication error — proving the
+  integration genuinely calls the network rather than short-circuiting
+  to a fake response, in both the configured and unconfigured states.
+
 ## Motion (hover + scroll)
 
 GSAP (`gsap`, `@gsap/react`) provides the product's hover and scroll
@@ -884,6 +932,16 @@ code that doesn't match `src/lib/db.ts`.
 - `sales.return` added, Manager and Employee both get it (frontline, same
   as the original sale)
 
+**Phase 13 — AI Business Intelligence**
+- A real `/reports` page: revenue trend, top customers, top products,
+  expense breakdown — all real Prisma aggregation, no AI involved, finally
+  giving the `reports.sales`/`reports.financial` permissions (seeded since
+  Phase 1) a real home
+- An honestly-gated AI narrative layer: reports "not configured" when no
+  `ANTHROPIC_API_KEY` is set rather than fabricating output, and makes a
+  real Anthropic API call (surfacing the real result or the real error)
+  when one is — generated on demand via a button, never on page load
+
 ## Known gaps / deliberately not built yet
 
 - No organization switcher — a user with multiple orgs always lands on the
@@ -949,7 +1007,17 @@ code that doesn't match `src/lib/db.ts`.
   matching the prevailing pattern); no variant archiving either
 - `sales.return` cross-role enforcement is verified at the permission
   catalog and UI-gate level only, same standing caveat as above
-- AI Business Intelligence — the last phase per the roadmap, not started
+- No `ANTHROPIC_API_KEY` is configured for this deployment's environment,
+  so the AI Summary feature is real but dormant until an operator sets
+  one — this is expected, not a bug (see "AI Business Intelligence" above)
+- The Reports page has no date-range picker (fixed 6-month/30-day windows)
+  and no export; real but intentionally minimal, same reasoning as the
+  Expenses page's financial summary card
+- No saved/scheduled reports, no per-branch report breakdown
+- Additional industry packs beyond Automobile Workshop and Clothing/Retail
+  — the roadmap's Phase 14 — not started; ask before building another
+  vertical, since which one is worth building next is a product decision,
+  not an engineering one
 - Rate limiting is DB-query based, not a dedicated store; fine for now, but
   the first thing to revisit if abuse patterns show up in production traffic
 
