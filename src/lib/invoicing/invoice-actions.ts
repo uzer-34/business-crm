@@ -153,6 +153,83 @@ export async function recordInvoicePaymentAction(invoiceId: string, input: unkno
   return { ok: true, data: undefined };
 }
 
+// Reverses money already collected — the real feature the return flow
+// (Phase 12) and order/PO cancel deliberately left open rather than
+// guessing at a refund policy. Reuses the existing Payment ledger with a
+// negative amount instead of inventing a separate credit-note model: the
+// payment history already shows every amount and date, a negative one
+// reads as a refund with no new UI concept needed, and Invoice.amountPaid
+// (a cached sum of Payment rows) stays correct with no separate code path.
+export async function refundInvoicePaymentAction(invoiceId: string, input: unknown): Promise<ActionResult> {
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, error: "Not signed in" };
+
+  const invoice = await db.invoice.findUnique({ where: { id: invoiceId } });
+  if (!invoice) return { ok: false, error: "Invoice not found" };
+
+  const ctx = await loadTenantContext(user.id, invoice.organizationId);
+  if (!ctx) return { ok: false, error: "Invoice not found" };
+
+  try {
+    requirePermission(ctx, "payments.record");
+  } catch (error) {
+    if (error instanceof ForbiddenError) return { ok: false, error: error.message };
+    throw error;
+  }
+
+  if (invoice.status === "VOID") {
+    return { ok: false, error: "This invoice was voided" };
+  }
+
+  const parsed = recordInvoicePaymentSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+
+  const amount = new Prisma.Decimal(parsed.data.amount);
+  if (amount.greaterThan(invoice.amountPaid)) {
+    return { ok: false, error: `Cannot refund more than the ${invoice.amountPaid.toString()} paid` };
+  }
+
+  const newAmountPaid = new Prisma.Decimal(invoice.amountPaid).minus(amount);
+  const paymentStatus = newAmountPaid.greaterThanOrEqualTo(invoice.total)
+    ? "PAID"
+    : newAmountPaid.greaterThan(0)
+      ? "PARTIALLY_PAID"
+      : "UNPAID";
+
+  await db.$transaction(async (tx) => {
+    await tx.payment.create({
+      data: {
+        organizationId: ctx.organizationId,
+        invoiceId,
+        amount: amount.negated(),
+        method: parsed.data.method,
+        reference: parsed.data.reference,
+        recordedByUserId: user.id,
+      },
+    });
+
+    await tx.invoice.update({
+      where: { id: invoiceId },
+      data: { amountPaid: newAmountPaid, paymentStatus },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        organizationId: ctx.organizationId,
+        actorUserId: user.id,
+        action: "payment.refunded",
+        targetType: "Invoice",
+        targetId: invoiceId,
+        metadata: { amount: amount.toString(), method: parsed.data.method, paymentStatus },
+      },
+    });
+  });
+
+  return { ok: true, data: undefined };
+}
+
 export async function voidInvoiceAction(invoiceId: string): Promise<ActionResult> {
   const user = await getCurrentUser();
   if (!user) return { ok: false, error: "Not signed in" };

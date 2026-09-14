@@ -688,16 +688,15 @@ that's been sitting in the schema since Phase 4.
   `Order.status` — the order genuinely was fulfilled; a post-fulfillment
   return is a separate lifecycle event layered on top, not an
   un-fulfillment.
-- **Deliberately does not touch money.** `processReturnAction` never
-  reverses `Order.amountPaid`, `Invoice`, or `Payment` state. A real refund
-  or exchange-credit flow is a genuine feature (a credit note, a cash
-  drawer transaction, store-credit issuance) that this phase intentionally
-  leaves as a manual follow-up rather than guessing at a refund policy no
-  one asked for — brief §46 says a feature isn't complete until
-  functionality *and* every other dimension is actually addressed, and
-  silently mutating payment state with no real refund flow behind it would
-  fail that bar, not meet it. Documented explicitly below rather than left
-  as a silent gap.
+- **Deliberately did not touch money at the time.** `processReturnAction`
+  never reversed `Order.amountPaid`, `Invoice`, or `Payment` state on its
+  own — this phase intentionally left the actual refund as a manual
+  follow-up rather than guessing at a refund policy no one had asked for
+  yet. `refundInvoicePaymentAction`/`refundOrderPaymentAction` (the UI
+  completeness pass, see "What exists today" below) later closed that
+  gap as its own explicit, separate action — a cashier still decides
+  whether a given return comes with a refund, a store-credit note, or
+  nothing, rather than the return itself silently moving money.
 - `sales.return` was added to the permission catalog (Manager and Employee
   both get it — processing a return at the counter is frontline work, same
   as the original sale; `sales.cancel` remains the only manager-only
@@ -943,8 +942,9 @@ code that doesn't match `src/lib/db.ts`.
 - Returns/exchanges: `OrderItem.quantityReturned`, restocking through the
   same movement ledger as every other stock change, finally exercising
   the `RETURN` movement type that's existed since Phase 4
-- Deliberately does not reverse payment/invoice state — a real refund
-  flow is left as a documented gap, not guessed at
+- Deliberately did not reverse payment/invoice state on its own at the
+  time — refunding is now a separate, explicit action (see "UI
+  completeness pass" below), not something a return silently does
 - `sales.return` added, Manager and Employee both get it (frontline, same
   as the original sale)
 
@@ -995,9 +995,19 @@ code that doesn't match `src/lib/db.ts`.
   security boundary — every mutation still derives its organizationId from
   `loadTenantContext(userId, orgId)`, which re-checks membership from the
   database regardless of this cookie
-- Invoice/expense edit and the refund/credit-note flow remain open (see
-  "Known gaps") — this pass covered entity-detail edit/archive, order/PO
-  cancel, and the org switcher specifically, not every create-only surface
+- Refunds closed the pass out: `refundInvoicePaymentAction` reuses the
+  existing Payment ledger with a *negative* amount rather than inventing a
+  separate credit-note model — the payment history already shows every
+  amount and date, so a negative one reads as a refund with no new UI
+  concept needed, and `Invoice.amountPaid` (a cached sum of Payment rows)
+  stays correct with no separate code path. `refundOrderPaymentAction`
+  mirrors this for a bare order that was never invoiced (`Order.amountPaid`
+  is tracked directly, no Payment relation there). Both cap the refund at
+  what's actually been paid and recompute paymentStatus the same way
+  recording a payment does, just in reverse
+- Invoice/expense edit remains open (see "Known gaps") — this pass covered
+  entity-detail edit/archive, order/PO cancel, the org switcher, and
+  refunds specifically, not every create-only surface
 
 ## Known gaps / deliberately not built yet
 
@@ -1038,7 +1048,9 @@ code that doesn't match `src/lib/db.ts`.
   storewide/cart-level discount becomes a real requirement
 - No partial-order invoicing — an invoice always covers a whole order;
   revisit if a real need for split invoices shows up
-- No invoice edit UI (create/void/pay only); no credit note / refund flow
+- No invoice edit UI (create/void/pay/refund only, no editing line items
+  after creation); refunding is real now (see "UI completeness pass"
+  above), a printable credit-note *document* is not
 - No expense edit UI (create/void only, matching Invoice); no recurring
   expenses; no receipt/file upload
 - Financial reporting is a single revenue-vs-expenses card for the current
@@ -1064,9 +1076,10 @@ code that doesn't match `src/lib/db.ts`.
 - `vehicles.*` cross-role enforcement is verified at the permission
   catalog and UI-gate level only, same standing caveat as other
   manager-only/employee-scoped gates
-- No refund/credit-note flow — a return restocks inventory and records
-  what came back, but reversing the money already collected is a real
-  feature intentionally left for later (see "Clothing / Retail" above)
+- Refunds are real now (see "UI completeness pass" above) — reversing
+  money already collected, on either an Invoice or a bare Order. Still no
+  separate credit-note *document* (a printable/issuable record distinct
+  from the payment ledger) — the Payment history is the record
 - No variant editing after generation (bulk-generated variants can't have
   their price overridden or attributes changed in the UI yet — create-only,
   matching the prevailing pattern); no variant archiving either

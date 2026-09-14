@@ -7,6 +7,7 @@ import { loadTenantContext } from "@/lib/rbac/guard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatMoney } from "@/lib/format";
 import { InvoicePaymentForm } from "./invoice-payment-form";
+import { RefundInvoicePaymentForm } from "./refund-invoice-payment-form";
 import { VoidInvoiceButton } from "./void-invoice-button";
 
 const METHOD_LABEL: Record<string, string> = {
@@ -123,23 +124,30 @@ export default async function InvoicePage({ params }: PageProps<"/invoices/[id]"
           {invoice.payments.length > 0 && (
             <div className="flex flex-col gap-1.5 border-t border-border pt-3">
               <p className="text-xs font-medium text-muted-foreground">Payment history</p>
-              {invoice.payments.map((payment) => (
-                <div key={payment.id} className="flex items-center justify-between text-sm">
-                  <span>
-                    {METHOD_LABEL[payment.method]}
-                    {payment.reference && ` · ${payment.reference}`}
-                  </span>
-                  <span className="text-muted-foreground">
-                    {formatMoney(payment.amount.toString(), organization.currencyCode, organization.locale)} ·{" "}
-                    {new Date(payment.createdAt).toLocaleDateString()}
-                  </span>
-                </div>
-              ))}
+              {invoice.payments.map((payment) => {
+                const isRefund = new Prisma.Decimal(payment.amount).isNegative();
+                return (
+                  <div key={payment.id} className="flex items-center justify-between text-sm">
+                    <span>
+                      {isRefund && "Refund · "}
+                      {METHOD_LABEL[payment.method]}
+                      {payment.reference && ` · ${payment.reference}`}
+                    </span>
+                    <span className={isRefund ? "text-danger" : "text-muted-foreground"}>
+                      {formatMoney(payment.amount.toString(), organization.currencyCode, organization.locale)} ·{" "}
+                      {new Date(payment.createdAt).toLocaleDateString()}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           )}
 
           {canRecordPayment && outstanding.greaterThan(0) && (
             <InvoicePaymentForm invoiceId={invoice.id} outstanding={outstanding.toString()} />
+          )}
+          {canRecordPayment && new Prisma.Decimal(invoice.amountPaid).greaterThan(0) && (
+            <RefundInvoicePaymentForm invoiceId={invoice.id} amountPaid={invoice.amountPaid.toString()} />
           )}
         </CardContent>
       </Card>

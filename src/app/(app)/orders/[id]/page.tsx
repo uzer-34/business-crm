@@ -9,6 +9,7 @@ import { formatMoney } from "@/lib/format";
 import { FulfillItemForm } from "./fulfill-item-form";
 import { ReturnItemForm } from "./return-item-form";
 import { OrderPaymentForm } from "./order-payment-form";
+import { RefundOrderPaymentForm } from "./refund-order-payment-form";
 import { GenerateInvoiceButton } from "./generate-invoice-button";
 import { CancelOrderButton } from "./cancel-order-button";
 
@@ -149,6 +150,9 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
           </div>
           {canFulfill && outstanding.greaterThan(0) && (
             <OrderPaymentForm orderId={order.id} outstanding={outstanding.toString()} />
+          )}
+          {canFulfill && new Prisma.Decimal(order.amountPaid).greaterThan(0) && (
+            <RefundOrderPaymentForm orderId={order.id} amountPaid={order.amountPaid.toString()} />
           )}
         </CardContent>
       </Card>

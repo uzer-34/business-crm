@@ -387,6 +387,65 @@ export async function cancelOrderAction(orderId: string): Promise<ActionResult> 
   return { ok: true, data: undefined };
 }
 
+// Order-level mirror of recordOrderPaymentAction, for an order that never
+// got invoiced (Order.amountPaid is tracked directly, no Payment ledger
+// like Invoice has) — see refundInvoicePaymentAction's comment for why
+// this exists now instead of being guessed at earlier.
+export async function refundOrderPaymentAction(orderId: string, input: unknown): Promise<ActionResult> {
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, error: "Not signed in" };
+
+  const order = await db.order.findUnique({ where: { id: orderId } });
+  if (!order) return { ok: false, error: "Order not found" };
+
+  const ctx = await loadTenantContext(user.id, order.organizationId);
+  if (!ctx) return { ok: false, error: "Order not found" };
+
+  try {
+    requirePermission(ctx, "sales.fulfill");
+  } catch (error) {
+    if (error instanceof ForbiddenError) return { ok: false, error: error.message };
+    throw error;
+  }
+
+  const parsed = recordPaymentSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+
+  const amount = new Prisma.Decimal(parsed.data.amount);
+  if (amount.greaterThan(order.amountPaid)) {
+    return { ok: false, error: `Cannot refund more than the ${order.amountPaid.toString()} paid` };
+  }
+
+  const newAmountPaid = new Prisma.Decimal(order.amountPaid).minus(amount);
+  const paymentStatus = newAmountPaid.greaterThanOrEqualTo(order.total)
+    ? "PAID"
+    : newAmountPaid.greaterThan(0)
+      ? "PARTIALLY_PAID"
+      : "UNPAID";
+
+  await db.$transaction(async (tx) => {
+    await tx.order.update({
+      where: { id: orderId },
+      data: { amountPaid: newAmountPaid, paymentStatus },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        organizationId: ctx.organizationId,
+        actorUserId: user.id,
+        action: "order.payment_refunded",
+        targetType: "Order",
+        targetId: orderId,
+        metadata: { amount: amount.toString(), paymentStatus },
+      },
+    });
+  });
+
+  return { ok: true, data: undefined };
+}
+
 export async function recordOrderPaymentAction(orderId: string, input: unknown): Promise<ActionResult> {
   const user = await getCurrentUser();
   if (!user) return { ok: false, error: "Not signed in" };
