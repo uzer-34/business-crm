@@ -5,6 +5,7 @@ import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext, requirePermission, ForbiddenError } from "@/lib/rbac/guard";
 import { createNoteSchema } from "@/lib/validation/customer";
 import { logActivity } from "./activity";
+import { recordAudit } from "@/lib/audit/record";
 import type { ActionResult } from "@/lib/auth/actions";
 
 export async function addNoteAction(customerId: string, input: unknown): Promise<ActionResult> {
@@ -47,6 +48,14 @@ export async function addNoteAction(customerId: string, input: unknown): Promise
       subjectId: customerId,
       type: "note.added",
       actorUserId: user.id,
+    });
+
+    await recordAudit(tx, {
+      organizationId: ctx.organizationId,
+      actorUserId: user.id,
+      action: "note.added",
+      targetType: "Customer",
+      targetId: customerId,
     });
   });
 

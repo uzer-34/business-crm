@@ -10,6 +10,7 @@ import {
   generateVariantMatrixSchema,
 } from "@/lib/validation/catalog";
 import { findOrCreateCategory } from "./category";
+import { recordAudit } from "@/lib/audit/record";
 import type { ActionResult } from "@/lib/auth/actions";
 
 function skuFragment(value: string): string {
@@ -57,7 +58,7 @@ export async function createProductAction(
         ? await findOrCreateCategory(tx, { organizationId: ctx.organizationId, kind: "PRODUCT", name: categoryName })
         : undefined;
 
-      return tx.product.create({
+      const created = await tx.product.create({
         data: {
           organizationId: ctx.organizationId,
           categoryId,
@@ -65,6 +66,17 @@ export async function createProductAction(
           ...rest,
         },
       });
+
+      await recordAudit(tx, {
+        organizationId: ctx.organizationId,
+        actorUserId: user.id,
+        action: "product.created",
+        targetType: "Product",
+        targetId: created.id,
+        metadata: { sku: created.sku },
+      });
+
+      return created;
     });
 
     return { ok: true, data: { productId: product.id } };
@@ -123,6 +135,14 @@ export async function editProductAction(productId: string, input: unknown): Prom
         : null;
 
       await tx.product.update({ where: { id: productId }, data: { categoryId, ...rest } });
+
+      await recordAudit(tx, {
+        organizationId: ctx.organizationId,
+        actorUserId: user.id,
+        action: "product.updated",
+        targetType: "Product",
+        targetId: productId,
+      });
     });
 
     return { ok: true, data: undefined };
@@ -146,7 +166,17 @@ export async function archiveProductAction(productId: string): Promise<ActionRes
     throw error;
   }
 
-  await db.product.update({ where: { id: productId }, data: { archivedAt: new Date() } });
+  await db.$transaction(async (tx) => {
+    await tx.product.update({ where: { id: productId }, data: { archivedAt: new Date() } });
+    await recordAudit(tx, {
+      organizationId: ctx.organizationId,
+      actorUserId: user.id,
+      action: "product.archived",
+      targetType: "Product",
+      targetId: productId,
+    });
+  });
+
   return { ok: true, data: undefined };
 }
 

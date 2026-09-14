@@ -1,44 +1,33 @@
 import type { ReactNode } from "react";
-import Link from "next/link";
 import { db } from "@/lib/db";
-import { getDefaultMembershipOrRedirect } from "@/lib/organization/actions";
+import { getDefaultMembershipOrRedirect, switchOrganizationAction } from "@/lib/organization/actions";
 import { logoutAction } from "@/lib/auth/actions";
-import { getTerminology } from "@/lib/industry/terminology";
-import { tracksVehicles } from "@/lib/industry/registry";
+import { loadTenantContext } from "@/lib/rbac/guard";
+import { AppShell } from "@/components/shell/app-shell";
 import { NotificationBell } from "./notification-bell";
-import { OrgSwitcher } from "./org-switcher";
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const { user, membership, memberships } = await getDefaultMembershipOrRedirect();
-  const organizations = memberships.map((m) => ({ id: m.organizationId, name: m.organization.name }));
 
-  const term = getTerminology(membership.organization.industryKey);
-  const NAV_ITEMS = [
-    { href: "/dashboard", label: "Dashboard" },
-    { href: "/customers", label: term.customers },
-    { href: "/tasks", label: "Tasks" },
-    { href: "/orders", label: term.orders },
-    ...(tracksVehicles(membership.organization.industryKey) ? [{ href: "/vehicles", label: "Vehicles" }] : []),
-    { href: "/invoices", label: "Invoices" },
-    { href: "/expenses", label: "Expenses" },
-    { href: "/reports", label: "Reports" },
-    { href: "/products", label: "Products" },
-    { href: "/services", label: "Services" },
-    { href: "/categories", label: "Categories" },
-    { href: "/inventory", label: "Inventory" },
-    { href: "/suppliers", label: "Suppliers" },
-    { href: "/purchase-orders", label: "Purchase Orders" },
-    { href: "/employees", label: "Employees" },
-    { href: "/roles", label: "Roles" },
-    { href: "/branches", label: "Branches" },
-    { href: "/settings", label: "Settings" },
-  ];
+  const ctx = await loadTenantContext(user.id, membership.organizationId);
+  const permissions = ctx ? Array.from(ctx.permissions) : [];
 
-  const notificationRows = await db.notification.findMany({
-    where: { membershipId: membership.id },
-    orderBy: { createdAt: "desc" },
-    take: 20,
-  });
+  const [notificationRows, branch] = await Promise.all([
+    db.notification.findMany({
+      where: { membershipId: membership.id },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    }),
+    // A member scoped to exactly one branch sees it as standing context in the
+    // shell; anyone with wider access picks a branch per screen instead.
+    membership.allBranches
+      ? Promise.resolve(null)
+      : db.membershipBranch.findFirst({
+          where: { membershipId: membership.id },
+          include: { branch: { select: { name: true } } },
+        }),
+  ]);
+
   const notifications = notificationRows.map((n) => ({
     id: n.id,
     message: n.message,
@@ -47,64 +36,25 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     createdAt: n.createdAt.toISOString(),
   }));
 
-  return (
-    <div className="flex min-h-screen">
-      <aside className="hidden w-64 flex-col border-r border-border bg-card px-4 py-6 sm:flex">
-        <div className="mb-8 flex flex-col gap-1 px-2">
-          {organizations.length > 1 ? (
-            <OrgSwitcher organizations={organizations} activeOrganizationId={membership.organizationId} />
-          ) : (
-            <p className="text-sm font-semibold">{membership.organization.name}</p>
-          )}
-          <p className="text-xs text-muted-foreground">{membership.role.name}</p>
-        </div>
-        <nav className="flex flex-1 flex-col gap-1">
-          {NAV_ITEMS.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="rounded-md px-3 py-2 text-sm font-medium text-foreground hover:bg-accent"
-            >
-              {item.label}
-            </Link>
-          ))}
-        </nav>
-        <div className="border-t border-border pt-4">
-          <p className="truncate px-2 text-xs text-muted-foreground">{user.email ?? user.phone}</p>
-          <form action={logoutAction}>
-            <button
-              type="submit"
-              className="mt-2 w-full rounded-md px-3 py-2 text-left text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
-            >
-              Sign out
-            </button>
-          </form>
-        </div>
-      </aside>
+  async function switchOrganization(organizationId: string) {
+    "use server";
+    await switchOrganizationAction(organizationId);
+  }
 
-      <div className="flex min-h-screen flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-border bg-card px-6 py-3 sm:hidden">
-          {organizations.length > 1 ? (
-            <div className="max-w-40">
-              <OrgSwitcher organizations={organizations} activeOrganizationId={membership.organizationId} />
-            </div>
-          ) : (
-            <p className="text-sm font-semibold">{membership.organization.name}</p>
-          )}
-          <div className="flex items-center gap-2">
-            <NotificationBell membershipId={membership.id} notifications={notifications} />
-            <form action={logoutAction}>
-              <button type="submit" className="text-sm text-muted-foreground">
-                Sign out
-              </button>
-            </form>
-          </div>
-        </header>
-        <div className="hidden justify-end border-b border-border bg-card px-6 py-2 sm:flex">
-          <NotificationBell membershipId={membership.id} notifications={notifications} />
-        </div>
-        <main className="flex-1 bg-background px-6 py-8">{children}</main>
-      </div>
-    </div>
+  return (
+    <AppShell
+      user={{ name: user.name, email: user.email, phone: user.phone }}
+      organizations={memberships.map((m) => ({ id: m.organizationId, name: m.organization.name }))}
+      activeOrganizationId={membership.organizationId}
+      roleName={membership.role.name}
+      branchName={branch?.branch.name ?? null}
+      permissions={permissions}
+      industryKey={membership.organization.industryKey}
+      onSwitchOrganization={switchOrganization}
+      onSignOut={logoutAction}
+      notificationSlot={<NotificationBell membershipId={membership.id} notifications={notifications} />}
+    >
+      {children}
+    </AppShell>
   );
 }

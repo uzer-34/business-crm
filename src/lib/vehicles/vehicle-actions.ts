@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext, requirePermission, ForbiddenError } from "@/lib/rbac/guard";
 import { createVehicleSchema, editVehicleSchema } from "@/lib/validation/vehicles";
+import { recordAudit } from "@/lib/audit/record";
 import type { ActionResult } from "@/lib/auth/actions";
 
 export async function createVehicleAction(
@@ -31,13 +32,26 @@ export async function createVehicleAction(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
 
-  const vehicle = await db.vehicle.create({
-    data: {
+  const vehicle = await db.$transaction(async (tx) => {
+    const created = await tx.vehicle.create({
+      data: {
+        organizationId: ctx.organizationId,
+        customerId,
+        createdByUserId: user.id,
+        ...parsed.data,
+      },
+    });
+
+    await recordAudit(tx, {
       organizationId: ctx.organizationId,
-      customerId,
-      createdByUserId: user.id,
-      ...parsed.data,
-    },
+      actorUserId: user.id,
+      action: "vehicle.created",
+      targetType: "Vehicle",
+      targetId: created.id,
+      metadata: { customerId },
+    });
+
+    return created;
   });
 
   return { ok: true, data: { vehicleId: vehicle.id } };
@@ -65,7 +79,17 @@ export async function editVehicleAction(vehicleId: string, input: unknown): Prom
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
 
-  await db.vehicle.update({ where: { id: vehicleId }, data: parsed.data });
+  await db.$transaction(async (tx) => {
+    await tx.vehicle.update({ where: { id: vehicleId }, data: parsed.data });
+    await recordAudit(tx, {
+      organizationId: ctx.organizationId,
+      actorUserId: user.id,
+      action: "vehicle.updated",
+      targetType: "Vehicle",
+      targetId: vehicleId,
+    });
+  });
+
   return { ok: true, data: undefined };
 }
 
@@ -86,6 +110,16 @@ export async function archiveVehicleAction(vehicleId: string): Promise<ActionRes
     throw error;
   }
 
-  await db.vehicle.update({ where: { id: vehicleId }, data: { archivedAt: new Date() } });
+  await db.$transaction(async (tx) => {
+    await tx.vehicle.update({ where: { id: vehicleId }, data: { archivedAt: new Date() } });
+    await recordAudit(tx, {
+      organizationId: ctx.organizationId,
+      actorUserId: user.id,
+      action: "vehicle.archived",
+      targetType: "Vehicle",
+      targetId: vehicleId,
+    });
+  });
+
   return { ok: true, data: undefined };
 }

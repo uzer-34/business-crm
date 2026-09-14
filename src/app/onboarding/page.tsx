@@ -2,6 +2,12 @@ import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth/session";
 import { db } from "@/lib/db";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  getCountryOptions,
+  getCurrencyOptions,
+  getLanguageOptions,
+  getTimezoneOptions,
+} from "@/lib/reference/locale-data";
 import { OnboardingForm } from "./onboarding-form";
 
 export default async function OnboardingPage() {
@@ -18,8 +24,8 @@ export default async function OnboardingPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-4 py-12">
-      <div className="w-full max-w-md">
+    <main className="flex min-h-dvh items-center justify-center px-4 py-10">
+      <div className="w-full max-w-lg">
         <Card>
           <CardHeader>
             <CardTitle>Set up your business</CardTitle>
@@ -28,7 +34,12 @@ export default async function OnboardingPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <OnboardingForm />
+            <OnboardingForm
+              countries={getCountryOptions()}
+              currencies={getCurrencyOptions()}
+              languages={getLanguageOptions()}
+              timezones={getTimezoneOptions()}
+            />
           </CardContent>
         </Card>
       </div>

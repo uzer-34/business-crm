@@ -1,9 +1,14 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { Bell, BellOff } from "lucide-react";
 import { markNotificationReadAction, markAllNotificationsReadAction } from "@/lib/notifications/actions";
+import { IconButton } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/menu";
+import { EmptyState } from "@/components/ui/feedback";
+import { cn } from "@/lib/utils";
 
 type NotificationItem = {
   id: string;
@@ -21,89 +26,75 @@ export function NotificationBell({
   notifications: NotificationItem[];
 }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
   const [, startTransition] = useTransition();
 
   const unreadCount = notifications.filter((n) => !n.readAt).length;
 
   return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="relative rounded-md p-2 text-foreground hover:bg-accent"
-        aria-label="Notifications"
-      >
-        <BellIcon />
-        {unreadCount > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-medium text-primary-foreground">
-            {unreadCount > 9 ? "9+" : unreadCount}
-          </span>
-        )}
-      </button>
-
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-50 mt-2 w-80 rounded-lg border border-border bg-card shadow-lg">
-            <div className="flex items-center justify-between border-b border-border p-3">
-              <p className="text-sm font-semibold">Notifications</p>
-              {unreadCount > 0 && (
-                <button
-                  type="button"
-                  className="text-xs text-muted-foreground hover:text-foreground"
-                  onClick={() => {
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <IconButton label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : "Notifications"} className="relative">
+          <Bell className="size-5" aria-hidden="true" />
+          {unreadCount > 0 && (
+            <span className="absolute top-1 right-1 flex size-4 items-center justify-center rounded-full bg-danger px-1 text-[9px] font-semibold text-accent-foreground">
+              {unreadCount > 9 ? "9+" : unreadCount}
+            </span>
+          )}
+        </IconButton>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-[min(20rem,calc(100vw-1.5rem))] p-0">
+        <div className="flex items-center justify-between border-b border-border px-3 py-2">
+          <p className="text-[13px] font-semibold">Notifications</p>
+          {unreadCount > 0 && (
+            <button
+              type="button"
+              className="cursor-pointer text-[12px] text-foreground-muted hover:text-foreground"
+              onClick={() => {
+                startTransition(async () => {
+                  await markAllNotificationsReadAction(membershipId);
+                  router.refresh();
+                });
+              }}
+            >
+              Mark all read
+            </button>
+          )}
+        </div>
+        <div className="max-h-80 overflow-y-auto">
+          {notifications.length === 0 ? (
+            <EmptyState
+              icon={BellOff}
+              title="No notifications"
+              description="Updates about your tasks, orders and invoices will appear here."
+              className="py-8"
+            />
+          ) : (
+            notifications.map((n) => (
+              <Link
+                key={n.id}
+                href={n.linkPath ?? "#"}
+                onClick={() => {
+                  if (!n.readAt) {
                     startTransition(async () => {
-                      await markAllNotificationsReadAction(membershipId);
+                      await markNotificationReadAction(n.id);
                       router.refresh();
                     });
-                  }}
-                >
-                  Mark all read
-                </button>
-              )}
-            </div>
-            <div className="max-h-80 overflow-y-auto">
-              {notifications.length === 0 ? (
-                <p className="p-4 text-center text-sm text-muted-foreground">No notifications yet.</p>
-              ) : (
-                notifications.map((n) => (
-                  <Link
-                    key={n.id}
-                    href={n.linkPath ?? "#"}
-                    onClick={() => {
-                      setOpen(false);
-                      if (!n.readAt) {
-                        startTransition(async () => {
-                          await markNotificationReadAction(n.id);
-                          router.refresh();
-                        });
-                      }
-                    }}
-                    className={`block border-b border-border px-3 py-2 text-sm last:border-b-0 hover:bg-accent ${
-                      n.readAt ? "text-muted-foreground" : "font-medium"
-                    }`}
-                  >
-                    {n.message}
-                    <p className="text-xs font-normal text-muted-foreground">
-                      {new Date(n.createdAt).toLocaleString()}
-                    </p>
-                  </Link>
-                ))
-              )}
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function BellIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
-      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-    </svg>
+                  }
+                }}
+                className={cn(
+                  "block border-b border-border px-3 py-2 text-[13px] last:border-b-0 hover:bg-hover",
+                  n.readAt ? "text-foreground-muted" : "font-medium text-foreground",
+                )}
+              >
+                {n.message}
+                <p className="mt-0.5 text-[11px] font-normal text-foreground-subtle">
+                  {new Date(n.createdAt).toLocaleString()}
+                </p>
+              </Link>
+            ))
+          )}
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

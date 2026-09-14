@@ -1,24 +1,42 @@
 import { z } from "zod";
 import { isIndustryKey } from "@/lib/industry/registry";
 
-// Minimal but real validation: ISO alpha-2 country, ISO 4217 currency,
-// IANA timezone, BCP-47 locale. We don't ship a bundled list of every valid
-// code (large, changes over time) — we check shape/casing and, where the
-// runtime can verify it for free, IANA timezone validity via Intl.
+/*
+ * Validation shape is unchanged (ISO 3166-1 alpha-2 country, ISO 4217
+ * currency, IANA timezone, BCP-47 locale) — what changed is that every message
+ * is written for the person filling in the form. A validator's default output
+ * ("Too small: expected string to have exactly 3 characters") describes the
+ * constraint to a developer and tells the user nothing about what to type.
+ */
 
 export const createOrganizationSchema = z.object({
-  name: z.string().trim().min(2).max(120),
-  countryCode: z.string().length(2).regex(/^[A-Z]{2}$/, "Use an ISO 3166-1 alpha-2 code, e.g. US"),
-  currencyCode: z.string().length(3).regex(/^[A-Z]{3}$/, "Use an ISO 4217 code, e.g. USD"),
-  timezone: z.string().refine(isValidTimezone, "Use an IANA timezone, e.g. America/New_York"),
-  locale: z.string().regex(/^[a-z]{2}(-[A-Z]{2})?$/, "Use a BCP-47 locale, e.g. en-US"),
-  industryKey: z.string().refine(isIndustryKey, "Unknown industry"),
+  name: z
+    .string()
+    .trim()
+    .min(2, "Enter your business name (at least 2 characters).")
+    .max(120, "Business name can be at most 120 characters."),
+  countryCode: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^[A-Z]{2}$/, "Choose a country from the list."),
+  currencyCode: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^[A-Z]{3}$/, "Currency must be a 3-letter currency code, such as USD, EUR, or INR."),
+  timezone: z.string().trim().refine(isValidTimezone, "Choose a timezone from the list, such as America/New_York."),
+  locale: z
+    .string()
+    .trim()
+    .regex(/^[a-z]{2}(-[A-Z]{2})?$/, "Choose a language from the list."),
+  industryKey: z.string().refine(isIndustryKey, "Choose an industry from the list."),
 });
 
 export type CreateOrganizationInput = z.infer<typeof createOrganizationSchema>;
 
 export const changeIndustrySchema = z.object({
-  industryKey: z.string().refine(isIndustryKey, "Unknown industry"),
+  industryKey: z.string().refine(isIndustryKey, "Choose an industry from the list."),
 });
 
 function isValidTimezone(value: string): boolean {

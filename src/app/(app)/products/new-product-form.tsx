@@ -2,22 +2,36 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Input, NativeSelect } from "@/components/ui/input";
+import { FormField, FormSection } from "@/components/ui/form";
+import { Alert } from "@/components/ui/feedback";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { createProductAction } from "@/lib/catalog/product-actions";
 
 export function NewProductForm({
   organizationId,
   categoryNames,
   suppliers,
+  defaultOpen = false,
 }: {
   organizationId: string;
   categoryNames: string[];
   suppliers: { id: string; name: string }[];
+  defaultOpen?: boolean;
 }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [name, setName] = useState("");
   const [sku, setSku] = useState("");
   const [categoryName, setCategoryName] = useState("");
@@ -28,129 +42,151 @@ export function NewProductForm({
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  if (!open) {
-    return <Button onClick={() => setOpen(true)}>Add product</Button>;
-  }
-
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 px-4 py-16">
-      <form
-        className="flex w-full max-w-md flex-col gap-4 rounded-lg border border-border bg-card p-6 shadow-lg"
-        onSubmit={(e) => {
-          e.preventDefault();
-          setError(null);
-          startTransition(async () => {
-            const result = await createProductAction(organizationId, {
-              name,
-              sku,
-              categoryName: categoryName || undefined,
-              costPrice,
-              sellingPrice,
-              reorderPoint: reorderPoint || undefined,
-              preferredSupplierId: preferredSupplierId || undefined,
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm">
+          <Plus className="size-4" aria-hidden="true" />
+          Add product
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <form
+          className="flex min-h-0 flex-col"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setError(null);
+            startTransition(async () => {
+              const result = await createProductAction(organizationId, {
+                name,
+                sku,
+                categoryName: categoryName || undefined,
+                costPrice,
+                sellingPrice,
+                reorderPoint: reorderPoint || undefined,
+                preferredSupplierId: preferredSupplierId || undefined,
+              });
+              if (!result.ok) {
+                setError(result.error);
+                return;
+              }
+              setOpen(false);
+              router.push(`/products/${result.data.productId}`);
             });
-            if (!result.ok) {
-              setError(result.error);
-              return;
-            }
-            setOpen(false);
-            router.push(`/products/${result.data.productId}`);
-          });
-        }}
-      >
-        <h2 className="text-lg font-semibold">Add product</h2>
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>Add product</DialogTitle>
+            <DialogDescription>You can add variants, images and stock after it exists.</DialogDescription>
+          </DialogHeader>
 
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="product-name">Name</Label>
-          <Input id="product-name" value={name} onChange={(e) => setName(e.target.value)} required />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="product-sku">SKU</Label>
-          <Input id="product-sku" value={sku} onChange={(e) => setSku(e.target.value)} required />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="product-category">Category</Label>
-          <Input
-            id="product-category"
-            value={categoryName}
-            onChange={(e) => setCategoryName(e.target.value)}
-            placeholder="Type to create or reuse a category"
-            list="product-category-options"
-          />
-          <datalist id="product-category-options">
-            {categoryNames.map((name) => (
-              <option key={name} value={name} />
-            ))}
-          </datalist>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="product-cost">Cost price</Label>
-            <Input
-              id="product-cost"
-              type="number"
-              min="0"
-              step="0.01"
-              value={costPrice}
-              onChange={(e) => setCostPrice(e.target.value)}
-              required
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="product-price">Selling price</Label>
-            <Input
-              id="product-price"
-              type="number"
-              min="0"
-              step="0.01"
-              value={sellingPrice}
-              onChange={(e) => setSellingPrice(e.target.value)}
-              required
-            />
-          </div>
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="product-reorder">Reorder point (optional)</Label>
-          <Input
-            id="product-reorder"
-            type="number"
-            min="0"
-            step="1"
-            value={reorderPoint}
-            onChange={(e) => setReorderPoint(e.target.value)}
-            placeholder="Get a low-stock alert at or below this quantity"
-          />
-        </div>
-        {suppliers.length > 0 && (
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="product-supplier">Preferred supplier (optional)</Label>
-            <select
-              id="product-supplier"
-              value={preferredSupplierId}
-              onChange={(e) => setPreferredSupplierId(e.target.value)}
-              className="h-10 rounded-md border border-border bg-card px-3 text-sm"
-            >
-              <option value="">None</option>
-              {suppliers.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
+          <DialogBody className="flex flex-col gap-4">
+            <FormSection title="Basics">
+              <FormField label="Name" required>
+                {(field) => (
+                  <Input {...field} value={name} onChange={(event) => setName(event.target.value)} autoFocus />
+                )}
+              </FormField>
+              <FormField label="SKU" description="Your own stock code. Must be unique in this business." required>
+                {(field) => <Input {...field} value={sku} onChange={(event) => setSku(event.target.value)} />}
+              </FormField>
+              <FormField label="Category" description="Type a new name to create it, or pick an existing one.">
+                {(field) => (
+                  <>
+                    <Input
+                      {...field}
+                      value={categoryName}
+                      onChange={(event) => setCategoryName(event.target.value)}
+                      placeholder="e.g. Shirts"
+                      list="product-category-options"
+                    />
+                    <datalist id="product-category-options">
+                      {categoryNames.map((option) => (
+                        <option key={option} value={option} />
+                      ))}
+                    </datalist>
+                  </>
+                )}
+              </FormField>
+            </FormSection>
 
-        {error && <p className="text-sm text-danger">{error}</p>}
+            <FormSection title="Pricing" columns={2}>
+              <FormField label="Cost price" required>
+                {(field) => (
+                  <Input
+                    {...field}
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={costPrice}
+                    onChange={(event) => setCostPrice(event.target.value)}
+                  />
+                )}
+              </FormField>
+              <FormField label="Selling price" required>
+                {(field) => (
+                  <Input
+                    {...field}
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={sellingPrice}
+                    onChange={(event) => setSellingPrice(event.target.value)}
+                  />
+                )}
+              </FormField>
+            </FormSection>
 
-        <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
-            Cancel
-          </Button>
-          <Button type="submit" disabled={isPending || !name || !sku}>
-            {isPending ? "Creating…" : "Create product"}
-          </Button>
-        </div>
-      </form>
-    </div>
+            <FormSection title="Inventory">
+              <FormField label="Reorder point" description="Flag this product as low stock at or below this quantity.">
+                {(field) => (
+                  <Input
+                    {...field}
+                    type="number"
+                    min="0"
+                    step="1"
+                    inputMode="numeric"
+                    value={reorderPoint}
+                    onChange={(event) => setReorderPoint(event.target.value)}
+                    placeholder="Optional"
+                  />
+                )}
+              </FormField>
+              {suppliers.length > 0 && (
+                <FormField label="Preferred supplier" description="Used as the default on purchase orders.">
+                  {(field) => (
+                    <NativeSelect
+                      {...field}
+                      value={preferredSupplierId}
+                      onChange={(event) => setPreferredSupplierId(event.target.value)}
+                    >
+                      <option value="">None</option>
+                      {suppliers.map((supplier) => (
+                        <option key={supplier.id} value={supplier.id}>
+                          {supplier.name}
+                        </option>
+                      ))}
+                    </NativeSelect>
+                  )}
+                </FormField>
+              )}
+            </FormSection>
+
+            {error && <Alert tone="danger">{error}</Alert>}
+          </DialogBody>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" loading={isPending} disabled={!name.trim() || !sku.trim()}>
+              {isPending ? "Creating…" : "Create product"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

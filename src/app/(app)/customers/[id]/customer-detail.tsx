@@ -4,8 +4,12 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Input, NativeSelect } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Timeline } from "@/components/timeline/timeline";
+import type { TimelineEvent } from "@/lib/activity/timeline";
+import { tabsFor, toTabSlug, type Tab } from "./tabs";
 import { RevealOnScroll } from "@/components/motion/reveal-on-scroll";
 import { assignCustomerAction } from "@/lib/customer/actions";
 import { addNoteAction } from "@/lib/customer/notes-actions";
@@ -22,7 +26,6 @@ type Task = {
   dueAt: string | null;
   assignedToLabel: string | null;
 };
-type ActivityItem = { id: string; type: string; createdAt: string; actorName: string | null; summary: string };
 type OrderSummary = { id: string; orderNumber: string; status: string; total: string };
 type InvoiceSummary = { id: string; invoiceNumber: string; status: string; paymentStatus: string; total: string };
 type CustomFieldSummary = {
@@ -35,8 +38,6 @@ type CustomFieldSummary = {
 };
 type VehicleSummary = { id: string; make: string; model: string; year: number | null; plateNumber: string | null };
 
-const BASE_TABS = ["Overview", "Activity", "Notes", "Tasks", "Orders", "Invoices"] as const;
-type Tab = (typeof BASE_TABS)[number] | "Vehicles";
 
 export function CustomerDetail({
   organizationId,
@@ -45,7 +46,8 @@ export function CustomerDetail({
   members,
   notes,
   tasks,
-  activities,
+  timeline,
+  activeTab,
   orders,
   invoices,
   customFields,
@@ -62,7 +64,8 @@ export function CustomerDetail({
   members: Membership[];
   notes: Note[];
   tasks: Task[];
-  activities: ActivityItem[];
+  timeline: TimelineEvent[];
+  activeTab: Tab;
   orders: OrderSummary[];
   invoices: InvoiceSummary[];
   customFields: CustomFieldSummary[];
@@ -74,59 +77,75 @@ export function CustomerDetail({
   canEdit: boolean;
 }) {
   const router = useRouter();
-  const [tab, setTab] = useState<Tab>("Overview");
-  const TABS: Tab[] = vehicles !== null ? [...BASE_TABS, "Vehicles"] : [...BASE_TABS];
+  const tab = activeTab;
+  const TABS = tabsFor(vehicles !== null);
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex gap-1 border-b border-border">
-        {TABS.map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`px-3 py-2 text-sm font-medium transition-colors ${
-              tab === t ? "border-b-2 border-primary text-foreground" : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {t}
-          </button>
-        ))}
+      {/* Scrolls horizontally on narrow screens rather than wrapping into rows. */}
+      <div className="-mx-3 overflow-x-auto border-b border-border px-3 sm:mx-0 sm:px-0">
+        <div role="tablist" className="flex min-w-max gap-1">
+          {TABS.map((candidate) => (
+            <Link
+              key={candidate}
+              href={`/customers/${customerId}?tab=${toTabSlug(candidate)}`}
+              role="tab"
+              aria-selected={tab === candidate}
+              scroll={false}
+              className={`border-b-2 px-3 py-2 text-[13px] font-medium whitespace-nowrap transition-colors ${
+                tab === candidate
+                  ? "border-accent text-foreground"
+                  : "border-transparent text-foreground-muted hover:text-foreground"
+              }`}
+            >
+              {candidate}
+            </Link>
+          ))}
+        </div>
       </div>
 
       {tab === "Overview" && (
         <Card>
-          <CardContent className="flex flex-col gap-4 p-4">
+          <CardContent className="flex flex-col gap-4">
             {canAssign && (
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium">Assigned to</label>
-                <select
-                  className="h-10 max-w-xs rounded-md border border-border bg-card px-3 text-sm"
+              <div className="flex max-w-xs flex-col gap-1.5">
+                <Label htmlFor="customer-owner">Assigned to</Label>
+                <NativeSelect
+                  id="customer-owner"
                   defaultValue={assignedToId ?? ""}
-                  onChange={(e) => {
-                    void assignCustomerAction(customerId, e.target.value || null).then(() => router.refresh());
+                  onChange={(event) => {
+                    void assignCustomerAction(customerId, event.target.value || null).then(() => router.refresh());
                   }}
                 >
                   <option value="">Unassigned</option>
-                  {members.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label}
+                  {members.map((member) => (
+                    <option key={member.id} value={member.id}>
+                      {member.label}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
               </div>
             )}
             {customFields.length > 0 && (
-              <CustomFieldsSection organizationId={organizationId} customerId={customerId} fields={customFields} canEdit={canEdit} />
+              <CustomFieldsSection
+                organizationId={organizationId}
+                customerId={customerId}
+                fields={customFields}
+                canEdit={canEdit}
+              />
             )}
-            <RecentActivity activities={activities.slice(0, 5)} />
+            <div>
+              <h3 className="mb-3 text-[13px] font-semibold">Recent activity</h3>
+              <Timeline events={timeline.slice(0, 5)} />
+            </div>
           </CardContent>
         </Card>
       )}
 
       {tab === "Activity" && (
         <Card>
-          <CardContent className="p-4">
-            <RecentActivity activities={activities} />
+          <CardContent>
+            <Timeline events={timeline} />
           </CardContent>
         </Card>
       )}
@@ -352,26 +371,6 @@ function formatFieldValue(field: CustomFieldSummary): string {
   return String(field.value);
 }
 
-function RecentActivity({ activities }: { activities: ActivityItem[] }) {
-  if (activities.length === 0) {
-    return <p className="text-sm text-muted-foreground">No activity yet.</p>;
-  }
-  return (
-    <RevealOnScroll className="flex flex-col gap-3">
-      {activities.map((item) => (
-        <div key={item.id} className="flex gap-3 text-sm">
-          <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-          <div>
-            <p>{item.summary}</p>
-            <p className="text-xs text-muted-foreground">
-              {item.actorName ?? "System"} · {new Date(item.createdAt).toLocaleString()}
-            </p>
-          </div>
-        </div>
-      ))}
-    </RevealOnScroll>
-  );
-}
 
 function NotesTab({ customerId, notes, canEdit }: { customerId: string; notes: Note[]; canEdit: boolean }) {
   const router = useRouter();

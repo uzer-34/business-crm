@@ -5,6 +5,7 @@ import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext, requirePermission, ForbiddenError } from "@/lib/rbac/guard";
 import { createCustomerSchema, editCustomerSchema } from "@/lib/validation/customer";
 import { logActivity } from "./activity";
+import { recordAudit } from "@/lib/audit/record";
 import { notifyMembership } from "@/lib/notifications/notify";
 import type { ActionResult } from "@/lib/auth/actions";
 
@@ -48,6 +49,14 @@ export async function createCustomerAction(
       subjectId: created.id,
       type: "customer.created",
       actorUserId: user.id,
+    });
+
+    await recordAudit(tx, {
+      organizationId: ctx.organizationId,
+      actorUserId: user.id,
+      action: "customer.created",
+      targetType: "Customer",
+      targetId: created.id,
     });
 
     return created;
@@ -107,6 +116,15 @@ export async function assignCustomerAction(
       metadata: { assignedToId },
     });
 
+    await recordAudit(tx, {
+      organizationId: ctx.organizationId,
+      actorUserId: user.id,
+      action: "customer.assigned",
+      targetType: "Customer",
+      targetId: customerId,
+      metadata: { assignedToId },
+    });
+
     if (assignedToId) {
       await notifyMembership(tx, {
         organizationId: ctx.organizationId,
@@ -153,6 +171,14 @@ export async function editCustomerAction(customerId: string, input: unknown): Pr
       type: "customer.updated",
       actorUserId: user.id,
     });
+
+    await recordAudit(tx, {
+      organizationId: ctx.organizationId,
+      actorUserId: user.id,
+      action: "customer.updated",
+      targetType: "Customer",
+      targetId: customerId,
+    });
   });
 
   return { ok: true, data: undefined };
@@ -181,6 +207,14 @@ export async function archiveCustomerAction(customerId: string): Promise<ActionR
       subjectId: customerId,
       type: "customer.archived",
       actorUserId: user.id,
+    });
+
+    await recordAudit(tx, {
+      organizationId: ctx.organizationId,
+      actorUserId: user.id,
+      action: "customer.archived",
+      targetType: "Customer",
+      targetId: customerId,
     });
   });
 

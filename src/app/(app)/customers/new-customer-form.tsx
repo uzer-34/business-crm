@@ -2,9 +2,23 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Input, NativeSelect } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { FormField } from "@/components/ui/form";
+import { Alert } from "@/components/ui/feedback";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { createCustomerAction } from "@/lib/customer/actions";
 import { setCustomFieldValueAction } from "@/lib/industry/custom-field-actions";
 
@@ -20,12 +34,16 @@ type CustomFieldDefinition = {
 export function NewCustomerForm({
   organizationId,
   customFields = [],
+  customerNoun,
+  defaultOpen = false,
 }: {
   organizationId: string;
   customFields?: CustomFieldDefinition[];
+  customerNoun: string;
+  defaultOpen?: boolean;
 }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [type, setType] = useState<"INDIVIDUAL" | "BUSINESS">("INDIVIDUAL");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -34,130 +52,174 @@ export function NewCustomerForm({
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  if (!open) {
-    return <Button onClick={() => setOpen(true)}>Add customer</Button>;
+  const title = `Add ${customerNoun.toLowerCase()}`;
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm">
+          <Plus className="size-4" aria-hidden="true" />
+          {title}
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <form
+          className="flex min-h-0 flex-col"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setError(null);
+            startTransition(async () => {
+              const result = await createCustomerAction(organizationId, {
+                type,
+                name,
+                email,
+                phone,
+                status: "LEAD",
+                tags: [],
+              });
+              if (!result.ok) {
+                setError(result.error);
+                return;
+              }
+
+              for (const field of customFields) {
+                const raw = fieldValues[field.id];
+                if (raw === undefined || raw === "") continue;
+                const value = field.fieldType === "NUMBER" ? Number(raw) : raw;
+                await setCustomFieldValueAction(organizationId, {
+                  definitionId: field.id,
+                  entityId: result.data.customerId,
+                  value,
+                });
+              }
+
+              setOpen(false);
+              router.push(`/customers/${result.data.customerId}`);
+            });
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>{title}</DialogTitle>
+            <DialogDescription>They&apos;ll start as a lead — you can change that any time.</DialogDescription>
+          </DialogHeader>
+
+          <DialogBody className="flex flex-col gap-4">
+            <div className="flex rounded-md border border-border p-1" role="group" aria-label="Customer type">
+              {(["INDIVIDUAL", "BUSINESS"] as const).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  aria-pressed={type === option}
+                  onClick={() => setType(option)}
+                  className={`flex-1 cursor-pointer rounded-sm py-1.5 text-[13px] font-medium transition-colors ${
+                    type === option ? "bg-selected text-foreground" : "text-foreground-muted hover:text-foreground"
+                  }`}
+                >
+                  {option === "INDIVIDUAL" ? "Individual" : "Business"}
+                </button>
+              ))}
+            </div>
+
+            <FormField label={type === "BUSINESS" ? "Company name" : "Full name"} required>
+              {(field) => (
+                <Input {...field} value={name} onChange={(event) => setName(event.target.value)} autoFocus />
+              )}
+            </FormField>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FormField label="Email">
+                {(field) => (
+                  <Input
+                    {...field}
+                    type="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    placeholder="name@example.com"
+                  />
+                )}
+              </FormField>
+              <FormField label="Phone">
+                {(field) => <Input {...field} value={phone} onChange={(event) => setPhone(event.target.value)} />}
+              </FormField>
+            </div>
+
+            {customFields.map((field) => (
+              <CustomFieldInput
+                key={field.id}
+                field={field}
+                value={fieldValues[field.id]}
+                onChange={(value) => setFieldValues((previous) => ({ ...previous, [field.id]: value }))}
+              />
+            ))}
+
+            {error && <Alert tone="danger">{error}</Alert>}
+          </DialogBody>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" loading={isPending} disabled={!name.trim()}>
+              {isPending ? "Creating…" : `Create ${customerNoun.toLowerCase()}`}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Renders one organization-defined field by its stored type. Milestone 2's
+ * attribute engine generalizes this into a shared renderer; keeping the switch
+ * in one component now means there is a single place for it to move from.
+ */
+function CustomFieldInput({
+  field,
+  value,
+  onChange,
+}: {
+  field: CustomFieldDefinition;
+  value: string | boolean | undefined;
+  onChange: (value: string | boolean) => void;
+}) {
+  if (field.fieldType === "BOOLEAN") {
+    const id = `custom-${field.id}`;
+    return (
+      <div className="flex items-center gap-2">
+        <Checkbox id={id} checked={Boolean(value)} onCheckedChange={(checked) => onChange(checked === true)} />
+        <Label htmlFor={id} required={field.required}>
+          {field.label}
+        </Label>
+      </div>
+    );
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 px-4 py-16">
-      <form
-        className="flex w-full max-w-md flex-col gap-4 rounded-lg border border-border bg-card p-6 shadow-lg"
-        onSubmit={(e) => {
-          e.preventDefault();
-          setError(null);
-          startTransition(async () => {
-            const result = await createCustomerAction(organizationId, {
-              type,
-              name,
-              email,
-              phone,
-              status: "LEAD",
-              tags: [],
-            });
-            if (!result.ok) {
-              setError(result.error);
-              return;
-            }
-
-            for (const field of customFields) {
-              const raw = fieldValues[field.id];
-              if (raw === undefined || raw === "") continue;
-              const value = field.fieldType === "NUMBER" ? Number(raw) : raw;
-              await setCustomFieldValueAction(organizationId, {
-                definitionId: field.id,
-                entityId: result.data.customerId,
-                value,
-              });
-            }
-
-            setOpen(false);
-            router.push(`/customers/${result.data.customerId}`);
-          });
-        }}
-      >
-        <h2 className="text-lg font-semibold">Add customer</h2>
-
-        <div className="flex rounded-md border border-border p-1">
-          {(["INDIVIDUAL", "BUSINESS"] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setType(t)}
-              className={`flex-1 rounded-sm py-1.5 text-sm font-medium transition-colors ${
-                type === t ? "bg-accent text-accent-foreground" : "text-muted-foreground"
-              }`}
-            >
-              {t === "INDIVIDUAL" ? "Individual" : "Business"}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="customer-name">{type === "BUSINESS" ? "Company name" : "Full name"}</Label>
-          <Input id="customer-name" value={name} onChange={(e) => setName(e.target.value)} required />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="customer-email">Email</Label>
-          <Input id="customer-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="customer-phone">Phone</Label>
-          <Input id="customer-phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
-        </div>
-
-        {customFields.map((field) => (
-          <div key={field.id} className="flex flex-col gap-1.5">
-            <Label htmlFor={`custom-${field.id}`}>
-              {field.label}
-              {field.required && " *"}
-            </Label>
-            {field.fieldType === "BOOLEAN" ? (
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  id={`custom-${field.id}`}
-                  type="checkbox"
-                  checked={Boolean(fieldValues[field.id])}
-                  onChange={(e) => setFieldValues((prev) => ({ ...prev, [field.id]: e.target.checked }))}
-                />
-                Yes
-              </label>
-            ) : field.fieldType === "SELECT" ? (
-              <select
-                id={`custom-${field.id}`}
-                value={(fieldValues[field.id] as string) ?? ""}
-                onChange={(e) => setFieldValues((prev) => ({ ...prev, [field.id]: e.target.value }))}
-                className="h-10 rounded-md border border-border bg-card px-3 text-sm"
-              >
-                <option value="">Select…</option>
-                {(field.options ?? []).map((opt) => (
-                  <option key={opt} value={opt}>
-                    {opt}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <Input
-                id={`custom-${field.id}`}
-                type={field.fieldType === "NUMBER" ? "number" : field.fieldType === "DATE" ? "date" : "text"}
-                value={(fieldValues[field.id] as string) ?? ""}
-                onChange={(e) => setFieldValues((prev) => ({ ...prev, [field.id]: e.target.value }))}
-                required={field.required}
-              />
-            )}
-          </div>
-        ))}
-
-        {error && <p className="text-sm text-danger">{error}</p>}
-
-        <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
-            Cancel
-          </Button>
-          <Button type="submit" disabled={isPending || !name}>
-            {isPending ? "Creating…" : "Create customer"}
-          </Button>
-        </div>
-      </form>
-    </div>
+    <FormField label={field.label} required={field.required}>
+      {(fieldProps) =>
+        field.fieldType === "SELECT" ? (
+          <NativeSelect
+            {...fieldProps}
+            value={(value as string) ?? ""}
+            onChange={(event) => onChange(event.target.value)}
+          >
+            <option value="">Select…</option>
+            {(field.options ?? []).map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </NativeSelect>
+        ) : (
+          <Input
+            {...fieldProps}
+            type={field.fieldType === "NUMBER" ? "number" : field.fieldType === "DATE" ? "date" : "text"}
+            value={(value as string) ?? ""}
+            onChange={(event) => onChange(event.target.value)}
+          />
+        )
+      }
+    </FormField>
   );
 }

@@ -5,6 +5,7 @@ import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext, requirePermission, ForbiddenError } from "@/lib/rbac/guard";
 import { createTaskSchema } from "@/lib/validation/customer";
 import { notifyMembership } from "@/lib/notifications/notify";
+import { recordAudit } from "@/lib/audit/record";
 import type { ActionResult } from "@/lib/auth/actions";
 
 // A task not tied to any customer — team/back-office work (e.g. "restock
@@ -40,7 +41,7 @@ export async function createStandaloneTaskAction(organizationId: string, input: 
   }
 
   await db.$transaction(async (tx) => {
-    await tx.task.create({
+    const created = await tx.task.create({
       data: {
         organizationId: ctx.organizationId,
         title: parsed.data.title,
@@ -48,6 +49,15 @@ export async function createStandaloneTaskAction(organizationId: string, input: 
         assignedToId: parsed.data.assignedToId,
         createdByUserId: user.id,
       },
+    });
+
+    await recordAudit(tx, {
+      organizationId: ctx.organizationId,
+      actorUserId: user.id,
+      action: "task.created",
+      targetType: "Task",
+      targetId: created.id,
+      metadata: { title: parsed.data.title },
     });
 
     if (parsed.data.assignedToId) {

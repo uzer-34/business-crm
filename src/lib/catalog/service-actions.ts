@@ -5,6 +5,7 @@ import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext, requirePermission, ForbiddenError } from "@/lib/rbac/guard";
 import { createServiceSchema, editServiceSchema } from "@/lib/validation/catalog";
 import { findOrCreateCategory } from "./category";
+import { recordAudit } from "@/lib/audit/record";
 import type { ActionResult } from "@/lib/auth/actions";
 
 export async function createServiceAction(
@@ -35,7 +36,7 @@ export async function createServiceAction(
       ? await findOrCreateCategory(tx, { organizationId: ctx.organizationId, kind: "SERVICE", name: categoryName })
       : undefined;
 
-    return tx.service.create({
+    const created = await tx.service.create({
       data: {
         organizationId: ctx.organizationId,
         categoryId,
@@ -43,6 +44,16 @@ export async function createServiceAction(
         ...rest,
       },
     });
+
+    await recordAudit(tx, {
+      organizationId: ctx.organizationId,
+      actorUserId: user.id,
+      action: "service.created",
+      targetType: "Service",
+      targetId: created.id,
+    });
+
+    return created;
   });
 
   return { ok: true, data: { serviceId: service.id } };
@@ -85,6 +96,14 @@ export async function editServiceAction(serviceId: string, input: unknown): Prom
       : null;
 
     await tx.service.update({ where: { id: serviceId }, data: { categoryId, ...rest } });
+
+    await recordAudit(tx, {
+      organizationId: ctx.organizationId,
+      actorUserId: user.id,
+      action: "service.updated",
+      targetType: "Service",
+      targetId: serviceId,
+    });
   });
 
   return { ok: true, data: undefined };
@@ -105,6 +124,16 @@ export async function archiveServiceAction(serviceId: string): Promise<ActionRes
     throw error;
   }
 
-  await db.service.update({ where: { id: serviceId }, data: { archivedAt: new Date() } });
+  await db.$transaction(async (tx) => {
+    await tx.service.update({ where: { id: serviceId }, data: { archivedAt: new Date() } });
+    await recordAudit(tx, {
+      organizationId: ctx.organizationId,
+      actorUserId: user.id,
+      action: "service.archived",
+      targetType: "Service",
+      targetId: serviceId,
+    });
+  });
+
   return { ok: true, data: undefined };
 }

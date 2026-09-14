@@ -8,6 +8,7 @@ import {
   createCustomFieldDefinitionSchema,
   setCustomFieldValueSchema,
 } from "@/lib/validation/custom-fields";
+import { recordAudit } from "@/lib/audit/record";
 import type { ActionResult } from "@/lib/auth/actions";
 import type { CustomFieldEntityType, CustomFieldType } from "@/generated/prisma/client";
 
@@ -56,16 +57,36 @@ export async function createCustomFieldDefinitionAction(
   });
   if (existing) return { ok: false, error: "A field with this key already exists" };
 
-  const definition = await db.customFieldDefinition.create({
-    data: {
+  const definition = await db.$transaction(async (tx) => {
+    const created = await tx.customFieldDefinition.create({
+      data: {
+        organizationId: ctx.organizationId,
+        entityType: parsed.data.entityType,
+        key: parsed.data.key,
+        label: parsed.data.label,
+        fieldType: parsed.data.fieldType,
+        options: parsed.data.options,
+        required: parsed.data.required,
+      },
+    });
+
+    // Configuration changes alter what every future record can store, so they
+    // are audited even though no business record changed.
+    await recordAudit(tx, {
       organizationId: ctx.organizationId,
-      entityType: parsed.data.entityType,
-      key: parsed.data.key,
-      label: parsed.data.label,
-      fieldType: parsed.data.fieldType,
-      options: parsed.data.options,
-      required: parsed.data.required,
-    },
+      actorUserId: user.id,
+      action: "field.created",
+      targetType: "CustomFieldDefinition",
+      targetId: created.id,
+      metadata: {
+        entityType: parsed.data.entityType,
+        key: parsed.data.key,
+        fieldType: parsed.data.fieldType,
+        required: parsed.data.required,
+      },
+    });
+
+    return created;
   });
 
   return { ok: true, data: { definitionId: definition.id } };
@@ -88,7 +109,18 @@ export async function archiveCustomFieldDefinitionAction(definitionId: string): 
     throw error;
   }
 
-  await db.customFieldDefinition.update({ where: { id: definitionId }, data: { archivedAt: new Date() } });
+  await db.$transaction(async (tx) => {
+    await tx.customFieldDefinition.update({ where: { id: definitionId }, data: { archivedAt: new Date() } });
+    await recordAudit(tx, {
+      organizationId: ctx.organizationId,
+      actorUserId: user.id,
+      action: "field.archived",
+      targetType: "CustomFieldDefinition",
+      targetId: definitionId,
+      metadata: { entityType: definition.entityType, key: definition.key },
+    });
+  });
+
   return { ok: true, data: undefined };
 }
 

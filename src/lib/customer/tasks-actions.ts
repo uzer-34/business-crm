@@ -5,6 +5,7 @@ import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext, requirePermission, ForbiddenError } from "@/lib/rbac/guard";
 import { createTaskSchema } from "@/lib/validation/customer";
 import { logActivity } from "./activity";
+import { recordAudit } from "@/lib/audit/record";
 import { notifyMembership } from "@/lib/notifications/notify";
 import type { ActionResult } from "@/lib/auth/actions";
 
@@ -55,6 +56,15 @@ export async function createTaskAction(customerId: string, input: unknown): Prom
       subjectId: customerId,
       type: "task.created",
       actorUserId: user.id,
+      metadata: { title: parsed.data.title },
+    });
+
+    await recordAudit(tx, {
+      organizationId: ctx.organizationId,
+      actorUserId: user.id,
+      action: "task.created",
+      targetType: "Customer",
+      targetId: customerId,
       metadata: { title: parsed.data.title },
     });
 
@@ -109,6 +119,16 @@ export async function completeTaskAction(taskId: string): Promise<ActionResult> 
         metadata: { title: task.title },
       });
     }
+
+    // Recorded for every task, including standalone ones with no customer.
+    await recordAudit(tx, {
+      organizationId: ctx.organizationId,
+      actorUserId: user.id,
+      action: "task.completed",
+      targetType: "Task",
+      targetId: taskId,
+      metadata: { title: task.title },
+    });
   });
 
   return { ok: true, data: undefined };

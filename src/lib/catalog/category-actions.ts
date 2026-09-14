@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext, requirePermission, ForbiddenError } from "@/lib/rbac/guard";
 import type { CategoryKind } from "@/generated/prisma/enums";
+import { recordAudit } from "@/lib/audit/record";
 import type { ActionResult } from "@/lib/auth/actions";
 
 // Which permission gates managing a category depends on its kind — the
@@ -56,7 +57,18 @@ export async function editCategoryAction(categoryId: string, name: string): Prom
   });
   if (duplicate) return { ok: false, error: "A category with this name already exists" };
 
-  await db.category.update({ where: { id: categoryId }, data: { name: trimmed } });
+  await db.$transaction(async (tx) => {
+    await tx.category.update({ where: { id: categoryId }, data: { name: trimmed } });
+    await recordAudit(tx, {
+      organizationId: ctx.organizationId,
+      actorUserId: user.id,
+      action: "category.updated",
+      targetType: "Category",
+      targetId: categoryId,
+      metadata: { from: category.name, to: trimmed, kind: category.kind },
+    });
+  });
+
   return { ok: true, data: undefined };
 }
 
@@ -75,6 +87,17 @@ export async function archiveCategoryAction(categoryId: string): Promise<ActionR
     throw error;
   }
 
-  await db.category.update({ where: { id: categoryId }, data: { archivedAt: new Date() } });
+  await db.$transaction(async (tx) => {
+    await tx.category.update({ where: { id: categoryId }, data: { archivedAt: new Date() } });
+    await recordAudit(tx, {
+      organizationId: ctx.organizationId,
+      actorUserId: user.id,
+      action: "category.archived",
+      targetType: "Category",
+      targetId: categoryId,
+      metadata: { name: category.name, kind: category.kind },
+    });
+  });
+
   return { ok: true, data: undefined };
 }

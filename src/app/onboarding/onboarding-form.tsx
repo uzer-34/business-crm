@@ -4,106 +4,172 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
+import { FormActions, FormField } from "@/components/ui/form";
+import { Alert } from "@/components/ui/feedback";
 import { createOrganizationAction } from "@/lib/organization/actions";
 import { INDUSTRIES } from "@/lib/industry/registry";
+import { composeLocale } from "@/lib/reference/locale-data";
 
-const DEFAULT_TIMEZONE =
-  typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC";
+const DETECTED_TIMEZONE = typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC";
 
-export function OnboardingForm() {
+const INDUSTRY_OPTIONS: ComboboxOption[] = INDUSTRIES.map((industry) => ({
+  value: industry.key,
+  label: industry.label,
+}));
+
+/**
+ * Reference lists are resolved on the server (ICU data is large and identical
+ * for every visitor) and handed down as options, so the form ships no country
+ * or currency table of its own.
+ */
+export function OnboardingForm({
+  countries,
+  currencies,
+  languages,
+  timezones,
+}: {
+  countries: ComboboxOption[];
+  currencies: ComboboxOption[];
+  languages: ComboboxOption[];
+  timezones: ComboboxOption[];
+}) {
   const router = useRouter();
   const [name, setName] = useState("");
-  const [countryCode, setCountryCode] = useState("US");
-  const [currencyCode, setCurrencyCode] = useState("USD");
-  const [locale, setLocale] = useState("en-US");
   const [industryKey, setIndustryKey] = useState<string>(INDUSTRIES[0].key);
+  const [countryCode, setCountryCode] = useState("");
+  const [currencyCode, setCurrencyCode] = useState("");
+  const [language, setLanguage] = useState("en");
+  const [timezone, setTimezone] = useState(
+    timezones.some((option) => option.value === DETECTED_TIMEZONE) ? DETECTED_TIMEZONE : "UTC",
+  );
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  const canSubmit = name.trim().length >= 2 && countryCode !== "" && currencyCode !== "";
+
+  function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
     setError(null);
+
     startTransition(async () => {
       const result = await createOrganizationAction({
         name,
-        countryCode: countryCode.toUpperCase(),
-        currencyCode: currencyCode.toUpperCase(),
-        timezone: DEFAULT_TIMEZONE,
-        locale,
+        countryCode,
+        currencyCode,
+        timezone,
+        locale: composeLocale(language, countryCode),
         industryKey,
       });
+
       if (!result.ok) {
         setError(result.error);
         return;
       }
+
       router.push("/dashboard");
       router.refresh();
     });
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="name">Business name</Label>
-        <Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Acme Auto Care" required />
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="industry">Industry</Label>
-        <select
-          id="industry"
-          value={industryKey}
-          onChange={(e) => setIndustryKey(e.target.value)}
-          className="h-10 rounded-md border border-border bg-card px-3 text-sm"
-        >
-          {INDUSTRIES.map((industry) => (
-            <option key={industry.key} value={industry.key}>
-              {industry.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="country">Country code</Label>
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <FormField label="Business name" required>
+        {(field) => (
           <Input
-            id="country"
-            value={countryCode}
-            onChange={(e) => setCountryCode(e.target.value)}
-            placeholder="US"
-            maxLength={2}
-            required
+            {...field}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="Acme Auto Care"
+            autoComplete="organization"
           />
-        </div>
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="currency">Currency code</Label>
-          <Input
-            id="currency"
-            value={currencyCode}
-            onChange={(e) => setCurrencyCode(e.target.value)}
-            placeholder="USD"
-            maxLength={3}
-            required
+        )}
+      </FormField>
+
+      <FormField
+        label="Industry"
+        description="Shapes the terminology and modules you see across the app."
+        required
+      >
+        {(field) => (
+          <Combobox
+            id={field.id}
+            describedBy={field["aria-describedby"]}
+            options={INDUSTRY_OPTIONS}
+            value={industryKey}
+            onValueChange={setIndustryKey}
+            placeholder="Choose an industry"
+            searchPlaceholder="Search industries…"
           />
-        </div>
+        )}
+      </FormField>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <FormField label="Country" required>
+          {(field) => (
+            <Combobox
+              id={field.id}
+              options={countries}
+              value={countryCode}
+              onValueChange={setCountryCode}
+              placeholder="Choose a country"
+              searchPlaceholder="Search countries…"
+            />
+          )}
+        </FormField>
+
+        <FormField label="Currency" description="Used for every price and total." required>
+          {(field) => (
+            <Combobox
+              id={field.id}
+              describedBy={field["aria-describedby"]}
+              options={currencies}
+              value={currencyCode}
+              onValueChange={setCurrencyCode}
+              placeholder="Choose a currency"
+              searchPlaceholder="Search currencies…"
+            />
+          )}
+        </FormField>
       </div>
 
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="locale">Locale</Label>
-        <Input id="locale" value={locale} onChange={(e) => setLocale(e.target.value)} placeholder="en-US" required />
+      <div className="grid gap-4 sm:grid-cols-2">
+        <FormField label="Language" description="Controls number and date formatting.">
+          {(field) => (
+            <Combobox
+              id={field.id}
+              describedBy={field["aria-describedby"]}
+              options={languages}
+              value={language}
+              onValueChange={setLanguage}
+              placeholder="Choose a language"
+              searchPlaceholder="Search languages…"
+            />
+          )}
+        </FormField>
+
+        <FormField label="Timezone" description="Detected from your device — change it if it looks wrong.">
+          {(field) => (
+            <Combobox
+              id={field.id}
+              describedBy={field["aria-describedby"]}
+              options={timezones}
+              value={timezone}
+              onValueChange={setTimezone}
+              placeholder="Choose a timezone"
+              searchPlaceholder="Search timezones…"
+            />
+          )}
+        </FormField>
       </div>
 
-      <p className="text-xs text-muted-foreground">
-        Timezone detected as <span className="text-foreground">{DEFAULT_TIMEZONE}</span>.
-      </p>
+      {error && <Alert tone="danger">{error}</Alert>}
 
-      {error && <p className="text-sm text-danger">{error}</p>}
-
-      <Button type="submit" disabled={isPending || !name}>
-        {isPending ? "Creating…" : "Create business"}
-      </Button>
+      <FormActions>
+        <Button type="submit" size="lg" loading={isPending} disabled={!canSubmit}>
+          {isPending ? "Creating…" : "Create business"}
+        </Button>
+      </FormActions>
     </form>
   );
 }

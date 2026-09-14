@@ -1,23 +1,41 @@
-import Link from "next/link";
 import { db } from "@/lib/db";
 import { getDefaultMembershipOrRedirect } from "@/lib/organization/actions";
+import { loadTenantContext } from "@/lib/rbac/guard";
+import { PageHeader } from "@/components/ui/layout";
 import { Card, CardContent } from "@/components/ui/card";
-import { RevealOnScroll } from "@/components/motion/reveal-on-scroll";
-import { HoverLift } from "@/components/motion/hover-lift";
-import { formatMoney } from "@/lib/format";
+import { describeListView } from "@/lib/list-view/query";
+import { getProductList, parseProductListQuery, PRODUCT_LIST_CONFIG } from "@/lib/catalog/product-list";
+import type { FilterDefinition } from "@/components/data-table/filter-bar";
+import { ProductsTable } from "./products-table";
 import { NewProductForm } from "./new-product-form";
 
-export default async function ProductsPage() {
-  const { membership } = await getDefaultMembershipOrRedirect();
-  const { organization } = membership;
+const SORT_LABELS: Record<string, string> = {
+  name: "Product",
+  sku: "SKU",
+  sellingPrice: "Price",
+  createdAt: "Created",
+};
 
-  const [products, categories, suppliers] = await Promise.all([
-    db.product.findMany({
-      where: { organizationId: organization.id, archivedAt: null },
-      include: { category: true },
-      orderBy: { createdAt: "desc" },
-      take: 100,
-    }),
+export default async function ProductsPage({ searchParams }: PageProps<"/products">) {
+  const { user, membership } = await getDefaultMembershipOrRedirect();
+  const { organization } = membership;
+  const ctx = await loadTenantContext(user.id, organization.id);
+
+  if (!ctx || !ctx.permissions.has("products.view")) {
+    return (
+      <Card>
+        <CardContent className="py-16 text-center text-[13px] text-foreground-muted">
+          You don&apos;t have permission to view products.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const params = await searchParams;
+  const query = parseProductListQuery(params);
+
+  const [result, categories, suppliers] = await Promise.all([
+    getProductList(organization.id, query),
     db.category.findMany({
       where: { organizationId: organization.id, kind: "PRODUCT", archivedAt: null },
       orderBy: { name: "asc" },
@@ -28,50 +46,52 @@ export default async function ProductsPage() {
     }),
   ]);
 
-  return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Products</h1>
-          <p className="text-sm text-muted-foreground">{products.length} total</p>
-        </div>
-        <NewProductForm
-          organizationId={organization.id}
-          categoryNames={categories.map((c) => c.name)}
-          suppliers={suppliers.map((s) => ({ id: s.id, name: s.name }))}
-        />
-      </div>
+  const filters: FilterDefinition[] = [
+    {
+      key: "categoryId",
+      label: "Category",
+      options: categories.map((category) => ({ value: category.id, label: category.name })),
+    },
+    { key: "archived", label: "Archived", options: [{ value: "true", label: "Archived only" }] },
+  ];
 
-      {products.length === 0 ? (
-        <Card>
-          <CardContent className="py-16 text-center text-sm text-muted-foreground">
-            No products yet. Add your first one to start building a catalog.
-          </CardContent>
-        </Card>
-      ) : (
-        <RevealOnScroll className="flex flex-col gap-3">
-          {products.map((product) => (
-            <HoverLift key={product.id}>
-              <Link href={`/products/${product.id}`}>
-                <Card>
-                  <CardContent className="flex items-center justify-between p-4">
-                    <div>
-                      <p className="font-medium">{product.name}</p>
-                      <p className="text-sm text-muted-foreground">
-                        SKU {product.sku}
-                        {product.category && ` · ${product.category.name}`}
-                      </p>
-                    </div>
-                    <p className="font-medium tabular-nums">
-                      {formatMoney(product.sellingPrice.toString(), organization.currencyCode, organization.locale)}
-                    </p>
-                  </CardContent>
-                </Card>
-              </Link>
-            </HoverLift>
-          ))}
-        </RevealOnScroll>
-      )}
+  const summary = describeListView({
+    total: result.total,
+    noun: "product",
+    pluralNoun: "products",
+    search: query.search,
+    sortLabel: SORT_LABELS[query.sort ?? PRODUCT_LIST_CONFIG.defaultSort],
+    filterLabels: filters.filter((filter) => query.filters[filter.key]).map((filter) => filter.label),
+  });
+
+  const canCreate = ctx.permissions.has("products.create");
+
+  // Separate instances so ?new=1 opens exactly one dialog — see the same note
+  // on the customers page.
+  const renderCreateForm = (autoOpen: boolean) =>
+    canCreate ? (
+      <NewProductForm
+        organizationId={organization.id}
+        categoryNames={categories.map((category) => category.name)}
+        suppliers={suppliers.map((supplier) => ({ id: supplier.id, name: supplier.name }))}
+        defaultOpen={autoOpen}
+      />
+    ) : null;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <PageHeader title="Products" actions={renderCreateForm(params.new === "1")} />
+      <ProductsTable
+        rows={result.rows}
+        result={result}
+        query={query}
+        summary={summary}
+        filters={filters}
+        currencyCode={organization.currencyCode}
+        locale={organization.locale}
+        canEdit={ctx.permissions.has("products.edit")}
+        createSlot={renderCreateForm(false)}
+      />
     </div>
   );
 }
