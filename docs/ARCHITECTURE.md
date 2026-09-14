@@ -986,14 +986,27 @@ code that doesn't match `src/lib/db.ts`.
   inconsistency from Phase 5/6 seeding, not a deliberate omission) — added
   and backfilled onto existing organizations via the seed script's
   existing backfill mechanism
+- An organization switcher followed: `getDefaultMembershipOrRedirect` now
+  resolves against an `active_org_id` cookie (falling back to the first
+  membership, same as before, when there's no cookie or it names an org
+  the user's no longer in) instead of always taking the first membership
+  found; `switchOrganizationAction` sets it after checking the caller
+  actually has an ACTIVE membership there. Purely a UI preference, not a
+  security boundary — every mutation still derives its organizationId from
+  `loadTenantContext(userId, orgId)`, which re-checks membership from the
+  database regardless of this cookie
 - Invoice/expense edit and the refund/credit-note flow remain open (see
-  "Known gaps") — this pass covered entity-detail edit/archive plus
-  order/PO cancel specifically, not every create-only surface
+  "Known gaps") — this pass covered entity-detail edit/archive, order/PO
+  cancel, and the org switcher specifically, not every create-only surface
 
 ## Known gaps / deliberately not built yet
 
-- No organization switcher — a user with multiple orgs always lands on the
-  first membership found (`getDefaultMembershipOrRedirect`)
+- Organization switcher is real now (see "UI completeness pass" above) — a
+  sidebar/mobile-header dropdown for a user with more than one ACTIVE
+  membership, persisted via an `active_org_id` cookie that
+  `getDefaultMembershipOrRedirect` reads first; still no in-app way to
+  create a second org (only reachable today via an employee invite into
+  someone else's org)
 - No custom-role UI (the `roles.manage` permission exists, unused) — the
   invite flow (Phase 9) only ever assigns one of the three fixed system
   roles; branch assignment can be set at invite time but not edited after

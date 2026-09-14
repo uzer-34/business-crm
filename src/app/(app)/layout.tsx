@@ -6,9 +6,11 @@ import { logoutAction } from "@/lib/auth/actions";
 import { getTerminology } from "@/lib/industry/terminology";
 import { tracksVehicles } from "@/lib/industry/registry";
 import { NotificationBell } from "./notification-bell";
+import { OrgSwitcher } from "./org-switcher";
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
-  const { user, membership } = await getDefaultMembershipOrRedirect();
+  const { user, membership, memberships } = await getDefaultMembershipOrRedirect();
+  const organizations = memberships.map((m) => ({ id: m.organizationId, name: m.organization.name }));
 
   const term = getTerminology(membership.organization.industryKey);
   const NAV_ITEMS = [
@@ -46,8 +48,12 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen">
       <aside className="hidden w-64 flex-col border-r border-border bg-card px-4 py-6 sm:flex">
-        <div className="mb-8 px-2">
-          <p className="text-sm font-semibold">{membership.organization.name}</p>
+        <div className="mb-8 flex flex-col gap-1 px-2">
+          {organizations.length > 1 ? (
+            <OrgSwitcher organizations={organizations} activeOrganizationId={membership.organizationId} />
+          ) : (
+            <p className="text-sm font-semibold">{membership.organization.name}</p>
+          )}
           <p className="text-xs text-muted-foreground">{membership.role.name}</p>
         </div>
         <nav className="flex flex-1 flex-col gap-1">
@@ -76,7 +82,13 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
       <div className="flex min-h-screen flex-1 flex-col">
         <header className="flex items-center justify-between border-b border-border bg-card px-6 py-3 sm:hidden">
-          <p className="text-sm font-semibold">{membership.organization.name}</p>
+          {organizations.length > 1 ? (
+            <div className="max-w-40">
+              <OrgSwitcher organizations={organizations} activeOrganizationId={membership.organizationId} />
+            </div>
+          ) : (
+            <p className="text-sm font-semibold">{membership.organization.name}</p>
+          )}
           <div className="flex items-center gap-2">
             <NotificationBell membershipId={membership.id} notifications={notifications} />
             <form action={logoutAction}>

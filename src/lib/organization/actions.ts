@@ -1,12 +1,15 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext, requirePermission, ForbiddenError } from "@/lib/rbac/guard";
 import { createOrganizationSchema, changeIndustrySchema } from "@/lib/validation/organization";
 import { createOrganizationForUser } from "./create-organization";
 import type { ActionResult } from "@/lib/auth/actions";
+
+const ACTIVE_ORG_COOKIE_NAME = "active_org_id";
 
 export async function createOrganizationAction(
   input: unknown,
@@ -65,11 +68,13 @@ export async function changeIndustryAction(organizationId: string, input: unknow
 }
 
 /**
- * Loads the first ACTIVE membership for the current user, or null. Phase 1
- * has no organization switcher UI yet — a user with multiple orgs always
- * lands on the first one found. Never used to authorize a mutation: server
- * actions/route handlers must call loadTenantContext with an explicit
- * organizationId instead.
+ * Loads the current user's ACTIVE membership for the org they're currently
+ * viewing — the one named by the `active_org_id` cookie, or (no cookie, or
+ * it names an org they're no longer a member of) the first membership
+ * found. Also returns every ACTIVE membership so the UI can render a
+ * switcher when there's more than one. Never used to authorize a mutation:
+ * server actions/route handlers must call loadTenantContext with an
+ * explicit organizationId instead.
  */
 export async function getDefaultMembershipOrRedirect() {
   const user = await getCurrentUser();
@@ -77,15 +82,45 @@ export async function getDefaultMembershipOrRedirect() {
     redirect("/login");
   }
 
-  const membership = await db.membership.findFirst({
+  const memberships = await db.membership.findMany({
     where: { userId: user.id, status: "ACTIVE" },
     include: { organization: true, role: true },
     orderBy: { invitedAt: "asc" },
   });
 
-  if (!membership) {
+  if (memberships.length === 0) {
     redirect("/onboarding");
   }
 
-  return { user, membership };
+  const cookieStore = await cookies();
+  const activeOrgId = cookieStore.get(ACTIVE_ORG_COOKIE_NAME)?.value;
+  const membership = memberships.find((m) => m.organizationId === activeOrgId) ?? memberships[0];
+
+  return { user, membership, memberships };
+}
+
+// Switches which org subsequent page loads resolve to via
+// getDefaultMembershipOrRedirect, for a user who belongs to more than one.
+// Purely a UI preference, not a security boundary — every mutation still
+// derives its organizationId from loadTenantContext(userId, orgId), which
+// re-checks ACTIVE membership from the database regardless of this cookie.
+export async function switchOrganizationAction(organizationId: string): Promise<ActionResult> {
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, error: "Not signed in" };
+
+  const membership = await db.membership.findFirst({
+    where: { userId: user.id, organizationId, status: "ACTIVE" },
+  });
+  if (!membership) return { ok: false, error: "Not a member of this organization" };
+
+  const cookieStore = await cookies();
+  cookieStore.set(ACTIVE_ORG_COOKIE_NAME, organizationId, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 365,
+  });
+
+  return { ok: true, data: undefined };
 }
