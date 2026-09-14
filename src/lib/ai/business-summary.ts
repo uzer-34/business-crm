@@ -12,7 +12,7 @@ import {
 } from "@/lib/analytics/reports";
 import type { ActionResult } from "@/lib/auth/actions";
 
-const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_MODEL = "gemini-3.6-flash";
 const ANTHROPIC_MODEL = "claude-sonnet-5";
 
 function buildPrompt(dataSummary: string): string {

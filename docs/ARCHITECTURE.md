@@ -739,12 +739,16 @@ two honestly-separated halves.
   configured" result naming both env vars — not a fabricated paragraph
   pretending to be model output. If a key *is* set, it sends the exact
   same real analytics data computed above to that provider's real API
-  (`@google/genai`, `gemini-2.5-flash`, or `@anthropic-ai/sdk`,
+  (`@google/genai`, `gemini-3.6-flash`, or `@anthropic-ai/sdk`,
   `claude-sonnet-5`) and returns whatever the model actually says, or the
   real error if the call fails — never a fallback canned response papering
   over a broken integration. This is the only honest shape "AI insights"
   can take without either lying about a missing key or lying about a
-  failed call.
+  failed call. Verified live end-to-end with a real `GEMINI_API_KEY`
+  against Google's actual API (not just the "key missing" and "key
+  invalid" paths) — `gemini-2.5-flash` was tried first and Google
+  returned a real `404` naming `gemini-3.6-flash` as its replacement,
+  which is what's now wired in.
 - **Gemini first, deliberately.** Google's Gemini API has a standing free
   tier (not a time-boxed trial, unlike Anthropic/OpenAI's one-time trial
   credits) — an org can turn this feature on at zero cost with a key from
