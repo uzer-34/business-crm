@@ -115,6 +115,7 @@ export const SYSTEM_ROLES = [
       "purchases.view",
       "purchases.create",
       "purchases.receive",
+      "purchases.cancel",
       "sales.view",
       "sales.create",
       "sales.fulfill",

@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatMoney } from "@/lib/format";
 import { ReceiveItemForm } from "./receive-item-form";
 import { PaymentForm } from "./payment-form";
+import { CancelPurchaseOrderButton } from "./cancel-po-button";
 
 const STATUS_LABEL: Record<string, string> = {
   ORDERED: "Ordered",
@@ -62,6 +63,11 @@ export default async function PurchaseOrderPage({ params }: PageProps<"/purchase
             <p className="text-xs text-muted-foreground">
               {STATUS_LABEL[purchaseOrder.status]} · {PAYMENT_LABEL[purchaseOrder.paymentStatus]}
             </p>
+            {purchaseOrder.status === "ORDERED" && ctx.permissions.has("purchases.cancel") && (
+              <div className="mt-2">
+                <CancelPurchaseOrderButton purchaseOrderId={purchaseOrder.id} />
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

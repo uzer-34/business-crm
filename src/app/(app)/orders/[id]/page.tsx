@@ -10,6 +10,7 @@ import { FulfillItemForm } from "./fulfill-item-form";
 import { ReturnItemForm } from "./return-item-form";
 import { OrderPaymentForm } from "./order-payment-form";
 import { GenerateInvoiceButton } from "./generate-invoice-button";
+import { CancelOrderButton } from "./cancel-order-button";
 
 const STATUS_LABEL: Record<string, string> = {
   PENDING: "Pending",
@@ -78,6 +79,11 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
             <p className="text-xs text-muted-foreground">
               {STATUS_LABEL[order.status]} · {PAYMENT_LABEL[order.paymentStatus]}
             </p>
+            {order.status === "PENDING" && ctx.permissions.has("sales.cancel") && (
+              <div className="mt-2">
+                <CancelOrderButton orderId={order.id} />
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

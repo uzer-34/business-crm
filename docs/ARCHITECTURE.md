@@ -972,12 +972,23 @@ code that doesn't match `src/lib/db.ts`.
   previously suppliers were list-only with nowhere to link to; it also
   shows that supplier's purchase order history, same pattern as the
   Vehicle detail page's service history
-- No RBAC changes needed — `customers.edit`/`.delete`, `products.edit`/
-  `.archive`, `suppliers.edit`/`.archive`, `vehicles.edit` were all seeded
-  in earlier phases and simply had no action/UI behind them yet
-- Order/PO cancel, invoice/expense edit, and the refund/credit-note flow
-  remain open (see "Known gaps") — this pass covered the entity-detail
-  edit/archive gaps specifically, not every create-only surface
+- No RBAC changes needed for the entity edit/archive work — `customers.edit`/
+  `.delete`, `products.edit`/`.archive`, `suppliers.edit`/`.archive`,
+  `vehicles.edit` were all seeded in earlier phases and simply had no
+  action/UI behind them yet
+- Order and PO cancel followed in the same pass: `cancelOrderAction`/
+  `cancelPurchaseOrderAction`, only permitted while nothing has actually
+  happened against the record yet (no fulfillment/receiving, no payment,
+  no invoice) — a real, honest error explains why otherwise, same
+  restraint `processReturnAction` already established for not guessing at
+  a reversal. Found and fixed one real RBAC gap doing this: Manager had
+  `sales.cancel` but was missing `purchases.cancel` entirely (an
+  inconsistency from Phase 5/6 seeding, not a deliberate omission) — added
+  and backfilled onto existing organizations via the seed script's
+  existing backfill mechanism
+- Invoice/expense edit and the refund/credit-note flow remain open (see
+  "Known gaps") — this pass covered entity-detail edit/archive plus
+  order/PO cancel specifically, not every create-only surface
 
 ## Known gaps / deliberately not built yet
 
@@ -1000,13 +1011,16 @@ code that doesn't match `src/lib/db.ts`.
   edit/archive UI yet; no dedicated Category management screen
 - No per-product movement history page — the inventory page shows the last
   20 movements for the whole branch, not filtered per product
-- No PO edit/cancel UI yet (`purchases.cancel` permission exists, unused)
+- PO cancel is real now (only while nothing's been received/paid yet — see
+  "UI completeness pass" below); no PO edit UI
 - Supplier now has a real detail page with edit/archive (Phase 14 polish
   pass) — previously suppliers were list-only with no detail route at all
 - No supplier balance report — the outstanding-per-PO figure exists, but
   nothing rolls it up across all of a supplier's purchase orders yet
 - `RETURN` exists as an `InventoryMovementType` value but nothing creates
-  it yet; no order edit/cancel UI (`sales.cancel` permission exists, unused)
+  it yet; order cancel is real now (same "nothing's happened yet" guard as
+  PO cancel — a fulfilled order needs a return, not a cancel); no order
+  edit UI
 - No order-level discount, only per-line — fine for now, revisit if a
   storewide/cart-level discount becomes a real requirement
 - No partial-order invoicing — an invoice always covers a whole order;

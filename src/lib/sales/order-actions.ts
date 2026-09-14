@@ -316,6 +316,77 @@ export async function processReturnAction(input: unknown): Promise<ActionResult>
   return { ok: true, data: undefined };
 }
 
+// Only allowed while nothing has actually happened against the order yet
+// (no fulfillment, no payment, no invoice) — same restraint as
+// processReturnAction above: reversing stock/payment/invoice state that
+// already exists is a real feature (a credit note, a cash refund) this
+// action deliberately doesn't guess at. An order that's moved past
+// PENDING needs a return, not a cancel.
+export async function cancelOrderAction(orderId: string): Promise<ActionResult> {
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, error: "Not signed in" };
+
+  const order = await db.order.findUnique({ where: { id: orderId } });
+  if (!order) return { ok: false, error: "Order not found" };
+
+  const ctx = await loadTenantContext(user.id, order.organizationId);
+  if (!ctx) return { ok: false, error: "Order not found" };
+
+  try {
+    requirePermission(ctx, "sales.cancel");
+    await assertBranchAccess(ctx, order.branchId);
+  } catch (error) {
+    if (error instanceof ForbiddenError) return { ok: false, error: error.message };
+    throw error;
+  }
+
+  if (order.status === "CANCELLED") {
+    return { ok: false, error: "This order is already cancelled" };
+  }
+
+  const [items, invoiceCount] = await Promise.all([
+    db.orderItem.findMany({ where: { orderId } }),
+    db.invoice.count({ where: { orderId } }),
+  ]);
+
+  if (items.some((i) => i.quantityFulfilled > 0)) {
+    return { ok: false, error: "Cannot cancel an order that's already been fulfilled — process a return instead" };
+  }
+  if (new Prisma.Decimal(order.amountPaid).greaterThan(0)) {
+    return { ok: false, error: "Cannot cancel an order with a payment already recorded" };
+  }
+  if (invoiceCount > 0) {
+    return { ok: false, error: "Cannot cancel an order that already has an invoice" };
+  }
+
+  await db.$transaction(async (tx) => {
+    await tx.order.update({ where: { id: orderId }, data: { status: "CANCELLED" } });
+
+    await tx.auditLog.create({
+      data: {
+        organizationId: ctx.organizationId,
+        actorUserId: user.id,
+        action: "order.cancelled",
+        targetType: "Order",
+        targetId: orderId,
+      },
+    });
+
+    if (order.customerId) {
+      await logActivity(tx, {
+        organizationId: ctx.organizationId,
+        subjectType: "Customer",
+        subjectId: order.customerId,
+        type: "order.cancelled",
+        actorUserId: user.id,
+        metadata: { orderNumber: order.orderNumber },
+      });
+    }
+  });
+
+  return { ok: true, data: undefined };
+}
+
 export async function recordOrderPaymentAction(orderId: string, input: unknown): Promise<ActionResult> {
   const user = await getCurrentUser();
   if (!user) return { ok: false, error: "Not signed in" };

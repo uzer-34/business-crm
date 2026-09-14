@@ -187,6 +187,55 @@ export async function receivePurchaseOrderItemAction(input: unknown): Promise<Ac
   return { ok: true, data: undefined };
 }
 
+// Same restraint as cancelOrderAction: only allowed before anything's
+// actually happened against the PO (no items received, no payment made).
+export async function cancelPurchaseOrderAction(purchaseOrderId: string): Promise<ActionResult> {
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, error: "Not signed in" };
+
+  const purchaseOrder = await db.purchaseOrder.findUnique({ where: { id: purchaseOrderId } });
+  if (!purchaseOrder) return { ok: false, error: "Purchase order not found" };
+
+  const ctx = await loadTenantContext(user.id, purchaseOrder.organizationId);
+  if (!ctx) return { ok: false, error: "Purchase order not found" };
+
+  try {
+    requirePermission(ctx, "purchases.cancel");
+    await assertBranchAccess(ctx, purchaseOrder.branchId);
+  } catch (error) {
+    if (error instanceof ForbiddenError) return { ok: false, error: error.message };
+    throw error;
+  }
+
+  if (purchaseOrder.status === "CANCELLED") {
+    return { ok: false, error: "This purchase order is already cancelled" };
+  }
+
+  const items = await db.purchaseOrderItem.findMany({ where: { purchaseOrderId } });
+  if (items.some((i) => i.quantityReceived > 0)) {
+    return { ok: false, error: "Cannot cancel a purchase order that's already had items received" };
+  }
+  if (new Prisma.Decimal(purchaseOrder.amountPaid).greaterThan(0)) {
+    return { ok: false, error: "Cannot cancel a purchase order with a payment already recorded" };
+  }
+
+  await db.$transaction(async (tx) => {
+    await tx.purchaseOrder.update({ where: { id: purchaseOrderId }, data: { status: "CANCELLED" } });
+
+    await tx.auditLog.create({
+      data: {
+        organizationId: ctx.organizationId,
+        actorUserId: user.id,
+        action: "purchase_order.cancelled",
+        targetType: "PurchaseOrder",
+        targetId: purchaseOrderId,
+      },
+    });
+  });
+
+  return { ok: true, data: undefined };
+}
+
 export async function recordPurchaseOrderPaymentAction(
   purchaseOrderId: string,
   input: unknown,
