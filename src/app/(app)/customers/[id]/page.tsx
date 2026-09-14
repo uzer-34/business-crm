@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext } from "@/lib/rbac/guard";
+import { tracksVehicles } from "@/lib/industry/registry";
 import { Card, CardContent } from "@/components/ui/card";
 import { summarizeActivity } from "@/lib/customer/activity-summary";
 import { CustomerDetail } from "./customer-detail";
@@ -20,8 +21,19 @@ export default async function CustomerPage({ params }: PageProps<"/customers/[id
   const ctx = await loadTenantContext(user.id, customer.organizationId);
   if (!ctx) notFound();
 
-  const [notesRaw, tasksRaw, activitiesRaw, membersRaw, ordersRaw, invoicesRaw, customFieldDefs, customFieldValues] =
-    await Promise.all([
+  const showVehicles = tracksVehicles(customer.organization.industryKey);
+
+  const [
+    notesRaw,
+    tasksRaw,
+    activitiesRaw,
+    membersRaw,
+    ordersRaw,
+    invoicesRaw,
+    customFieldDefs,
+    customFieldValues,
+    vehiclesRaw,
+  ] = await Promise.all([
     db.note.findMany({
       where: { customerId: id },
       include: { author: true },
@@ -55,6 +67,9 @@ export default async function CustomerPage({ params }: PageProps<"/customers/[id
       orderBy: { createdAt: "asc" },
     }),
     db.customFieldValue.findMany({ where: { entityId: id } }),
+    showVehicles
+      ? db.vehicle.findMany({ where: { customerId: id, archivedAt: null }, orderBy: { createdAt: "desc" } })
+      : Promise.resolve([]),
   ]);
 
   const notes = notesRaw.map((n) => ({
@@ -100,6 +115,14 @@ export default async function CustomerPage({ params }: PageProps<"/customers/[id
     total: inv.total.toString(),
   }));
 
+  const vehicles = vehiclesRaw.map((v) => ({
+    id: v.id,
+    make: v.make,
+    model: v.model,
+    year: v.year,
+    plateNumber: v.plateNumber,
+  }));
+
   const valueByDefinitionId = new Map(customFieldValues.map((v) => [v.definitionId, v.value]));
   const customFields = customFieldDefs.map((f) => ({
     id: f.id,
@@ -137,6 +160,8 @@ export default async function CustomerPage({ params }: PageProps<"/customers/[id
         orders={orders}
         invoices={invoices}
         customFields={customFields}
+        vehicles={showVehicles ? vehicles : null}
+        canAddVehicle={ctx.permissions.has("vehicles.create")}
         currencyCode={customer.organization.currencyCode}
         locale={customer.organization.locale}
         canAssign={ctx.permissions.has("customers.assign")}

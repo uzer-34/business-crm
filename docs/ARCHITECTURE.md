@@ -600,6 +600,53 @@ will build on:
   catalog level, same standing caveat as other manager-only gates until a
   cheap way to spin up a second membership inline exists for every check.
 
+## Automobile Workshop (Phase 11)
+
+The first deep industry module — where Phase 10's generic mechanisms
+finally get a real consumer, and where the brief's "generic core"
+half of the principle earns a genuine exception.
+
+- **`Vehicle` is a real model, not a custom field.** Phase 10's
+  `CustomFieldDefinition` framework was deliberately left as the generic
+  mechanism; a workshop's vehicle needed something a JSON key-value pair
+  couldn't give it — its own identity with a real service history
+  (`Order.vehicleId`), real indexed lookup by plate number, and a proper
+  detail page. This is the intended shape of "industry intelligence" per
+  the brief's core principle: a purpose-built entity when a vertical
+  genuinely needs one, sitting *alongside* the generic Customer/Order core,
+  not replacing it or forcing every other industry to carry its weight.
+- **A Job Card is an Order, not a separate table.** `Order` gained two
+  nullable, workshop-only fields — `vehicleId` and `odometerReading` — used
+  by no other industry's orders. This mirrors the Phase 10 terminology
+  engine's own philosophy: don't fork the generic pipeline just because
+  one vertical calls the same thing something else. A workshop's job card
+  has the exact same lifecycle as any other order (create → fulfill →
+  invoice → pay), the exact same mixed product/service line items (parts =
+  Product, labour = Service), and gets its "Job Card" label purely from
+  Phase 10's terminology engine — no parallel workflow was built.
+- **Visibility is industry-gated, not permission-gated.** `tracksVehicles
+  (industryKey)` (a small explicit allowlist: `automobile_workshop` and
+  `repair`) decides whether the "Vehicles" nav link, the Customer 360
+  Vehicles tab, and the vehicle/odometer fields on the New Order form even
+  render — regardless of what permissions the viewer holds. A jeweller's
+  Owner has every permission in the catalog and still never sees a
+  "Vehicles" anything, because it would be clutter for their business. This
+  is a different axis from RBAC entirely: RBAC answers "is this person
+  allowed," industry-gating answers "does this business even have this
+  concept."
+- `vehicles.view/create/edit/archive` follow the same Manager-gets-all,
+  Employee-gets-view/create/edit split used everywhere else in the
+  catalog — logging a customer's vehicle is frontline service-desk work,
+  archiving one is a back-office correction.
+- Verified in a real browser end-to-end: an org created as "generic"
+  showed no Vehicles nav link at all; switching it to
+  "automobile_workshop" via Settings made the nav link and the Customer
+  360 Vehicles tab appear immediately; added a vehicle to a customer;
+  created a Job Card selecting that vehicle and entering an odometer
+  reading; confirmed the Job Card detail page showed both; and confirmed
+  the vehicle's own detail page listed that Job Card in its service
+  history with the correct odometer reading.
+
 ## Motion (hover + scroll)
 
 GSAP (`gsap`, `@gsap/react`) provides the product's hover and scroll
@@ -746,6 +793,20 @@ code that doesn't match `src/lib/db.ts`.
   etc.) are explicitly Phase 11/12's job, not this phase's — see that
   section above for why
 
+**Phase 11 — Automobile Workshop**
+- A real `Vehicle` model (make/model/year/plate/VIN, linked to a Customer)
+  with its own detail page and full service history via `Order.vehicleId`
+- Job Cards are just Orders with two extra nullable fields
+  (`vehicleId`, `odometerReading`) — no parallel workflow, same
+  create → fulfill → invoice → pay lifecycle every other order uses
+- Industry-gated visibility: the Vehicles nav link, the Customer 360
+  Vehicles tab, and the vehicle/odometer fields on the New Order form only
+  render for `automobile_workshop`/`repair` orgs — a new axis alongside
+  RBAC ("does this business have this concept" vs. "is this person
+  allowed")
+- `vehicles.*` permissions follow the same Manager-gets-all,
+  Employee-gets-view/create/edit split used throughout the catalog
+
 ## Known gaps / deliberately not built yet
 
 - No organization switcher — a user with multiple orgs always lands on the
@@ -796,7 +857,15 @@ code that doesn't match `src/lib/db.ts`.
 - No industry-pack auto-seeding of default custom fields — an Owner has to
   define fields by hand today; that seeding mechanism is deferred until
   Phase 11/12 actually exist to seed something (see "Industry Engine")
-- AI Business Intelligence — a later phase per the roadmap, not started
+- No vehicle edit UI yet (create/archive only, matching the prevailing
+  create-first pattern); no reminder system for upcoming service (e.g.
+  mileage/time-based service due alerts) — real but out of scope until a
+  concrete need for it shows up
+- `vehicles.*` cross-role enforcement is verified at the permission
+  catalog and UI-gate level only, same standing caveat as other
+  manager-only/employee-scoped gates
+- Clothing/Retail (Phase 12), AI Business Intelligence — later phases per
+  the roadmap, not started
 - Rate limiting is DB-query based, not a dedicated store; fine for now, but
   the first thing to revisit if abuse patterns show up in production traffic
 

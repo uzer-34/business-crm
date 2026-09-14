@@ -24,7 +24,7 @@ export async function createOrderAction(
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
-  const { branchId, customerId, assignedToId, notes, items } = parsed.data;
+  const { branchId, customerId, assignedToId, vehicleId, odometerReading, notes, items } = parsed.data;
 
   try {
     requirePermission(ctx, "sales.create");
@@ -44,6 +44,14 @@ export async function createOrderAction(
       where: { id: assignedToId, organizationId: ctx.organizationId, status: "ACTIVE" },
     });
     if (!membership) return { ok: false, error: "Employee not found in this organization" };
+  }
+
+  if (vehicleId) {
+    const vehicle = await db.vehicle.findFirst({ where: { id: vehicleId, organizationId: ctx.organizationId } });
+    if (!vehicle) return { ok: false, error: "Vehicle not found" };
+    if (customerId && vehicle.customerId !== customerId) {
+      return { ok: false, error: "Vehicle does not belong to this customer" };
+    }
   }
 
   const productIds = [...new Set(items.map((i) => i.productId).filter((id): id is string => Boolean(id)))];
@@ -93,6 +101,8 @@ export async function createOrderAction(
         branchId,
         customerId,
         assignedToId,
+        vehicleId,
+        odometerReading,
         orderNumber,
         notes,
         subtotal,

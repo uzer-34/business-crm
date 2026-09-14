@@ -11,6 +11,7 @@ import { assignCustomerAction } from "@/lib/customer/actions";
 import { addNoteAction } from "@/lib/customer/notes-actions";
 import { createTaskAction, completeTaskAction } from "@/lib/customer/tasks-actions";
 import { setCustomFieldValueAction } from "@/lib/industry/custom-field-actions";
+import { NewVehicleForm } from "@/app/(app)/vehicles/new-vehicle-form";
 
 type Membership = { id: string; label: string };
 type Note = { id: string; body: string; createdAt: string; authorName: string };
@@ -32,9 +33,10 @@ type CustomFieldSummary = {
   required: boolean;
   value: string | number | boolean | null;
 };
+type VehicleSummary = { id: string; make: string; model: string; year: number | null; plateNumber: string | null };
 
-const TABS = ["Overview", "Activity", "Notes", "Tasks", "Orders", "Invoices"] as const;
-type Tab = (typeof TABS)[number];
+const BASE_TABS = ["Overview", "Activity", "Notes", "Tasks", "Orders", "Invoices"] as const;
+type Tab = (typeof BASE_TABS)[number] | "Vehicles";
 
 export function CustomerDetail({
   organizationId,
@@ -47,6 +49,8 @@ export function CustomerDetail({
   orders,
   invoices,
   customFields,
+  vehicles,
+  canAddVehicle,
   currencyCode,
   locale,
   canAssign,
@@ -62,6 +66,8 @@ export function CustomerDetail({
   orders: OrderSummary[];
   invoices: InvoiceSummary[];
   customFields: CustomFieldSummary[];
+  vehicles: VehicleSummary[] | null;
+  canAddVehicle: boolean;
   currencyCode: string;
   locale: string;
   canAssign: boolean;
@@ -69,6 +75,7 @@ export function CustomerDetail({
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("Overview");
+  const TABS: Tab[] = vehicles !== null ? [...BASE_TABS, "Vehicles"] : [...BASE_TABS];
 
   return (
     <div className="flex flex-col gap-4">
@@ -133,6 +140,46 @@ export function CustomerDetail({
       )}
 
       {tab === "Invoices" && <InvoicesTab invoices={invoices} currencyCode={currencyCode} locale={locale} />}
+
+      {tab === "Vehicles" && vehicles !== null && (
+        <VehiclesTab customerId={customerId} vehicles={vehicles} canAddVehicle={canAddVehicle} />
+      )}
+    </div>
+  );
+}
+
+function VehiclesTab({
+  customerId,
+  vehicles,
+  canAddVehicle,
+}: {
+  customerId: string;
+  vehicles: VehicleSummary[];
+  canAddVehicle: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-4">
+      {canAddVehicle && <NewVehicleForm customers={[]} fixedCustomerId={customerId} />}
+
+      {vehicles.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No vehicles on file.</p>
+      ) : (
+        <RevealOnScroll className="flex flex-col gap-2">
+          {vehicles.map((vehicle) => (
+            <Link key={vehicle.id} href={`/vehicles/${vehicle.id}`}>
+              <Card>
+                <CardContent className="flex items-center justify-between p-3">
+                  <span className="text-sm font-medium">
+                    {vehicle.make} {vehicle.model}
+                    {vehicle.year && ` (${vehicle.year})`}
+                  </span>
+                  {vehicle.plateNumber && <span className="text-sm text-muted-foreground">{vehicle.plateNumber}</span>}
+                </CardContent>
+              </Card>
+            </Link>
+          ))}
+        </RevealOnScroll>
+      )}
     </div>
   );
 }

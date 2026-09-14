@@ -23,3 +23,14 @@ export type IndustryKey = (typeof INDUSTRIES)[number]["key"];
 export function isIndustryKey(value: string): value is IndustryKey {
   return INDUSTRIES.some((i) => i.key === value);
 }
+
+// Phase 11's Vehicle module (plate/VIN/mileage tracking, job cards linked
+// to a vehicle) is only useful to a business that actually services
+// vehicles — surfacing it for a jeweller or a restaurant would just be
+// clutter. Small, explicit allowlist rather than a generic "industry has
+// module X" config table, since exactly one module needs this check today.
+const VEHICLE_TRACKING_INDUSTRIES: readonly IndustryKey[] = ["automobile_workshop", "repair"];
+
+export function tracksVehicles(industryKey: string): boolean {
+  return (VEHICLE_TRACKING_INDUSTRIES as readonly string[]).includes(industryKey);
+}

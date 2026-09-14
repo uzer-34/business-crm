@@ -18,6 +18,10 @@ export const createOrderSchema = z.object({
   branchId: z.string().min(1),
   customerId: z.string().optional(),
   assignedToId: z.string().optional(),
+  // Automobile Workshop only (Phase 11) — null/undefined for every other
+  // industry's orders.
+  vehicleId: z.string().optional(),
+  odometerReading: z.coerce.number().int().nonnegative().optional(),
   notes: z.string().trim().max(2000).optional(),
   items: z.array(orderItemSchema).min(1, "Add at least one line item"),
 });

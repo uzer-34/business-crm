@@ -54,6 +54,8 @@ function emptyLine(products: ProductOption[], services: ServiceOption[]): LineIt
   };
 }
 
+type VehicleOption = { id: string; customerId: string; label: string };
+
 export function NewOrderForm({
   organizationId,
   branches,
@@ -62,6 +64,8 @@ export function NewOrderForm({
   products,
   services,
   initialCustomerId,
+  vehicles = [],
+  trackVehicles = false,
 }: {
   organizationId: string;
   branches: { id: string; name: string }[];
@@ -70,14 +74,20 @@ export function NewOrderForm({
   products: ProductOption[];
   services: ServiceOption[];
   initialCustomerId?: string;
+  vehicles?: VehicleOption[];
+  trackVehicles?: boolean;
 }) {
   const router = useRouter();
   const [branchId, setBranchId] = useState(branches[0]?.id ?? "");
   const [customerId, setCustomerId] = useState(initialCustomerId ?? "");
   const [assignedToId, setAssignedToId] = useState("");
+  const [vehicleId, setVehicleId] = useState("");
+  const [odometerReading, setOdometerReading] = useState("");
   const [items, setItems] = useState<LineItem[]>([emptyLine(products, services)]);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  const vehiclesForCustomer = vehicles.filter((v) => v.customerId === customerId);
 
   function updateItem(index: number, patch: Partial<LineItem>) {
     setItems((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
@@ -124,6 +134,8 @@ export function NewOrderForm({
             branchId,
             customerId: customerId || undefined,
             assignedToId: assignedToId || undefined,
+            vehicleId: vehicleId || undefined,
+            odometerReading: odometerReading || undefined,
             items: items.map((item) => ({
               productId: item.kind === "product" ? item.productId : undefined,
               variantId: item.kind === "product" ? item.variantId || undefined : undefined,
@@ -164,7 +176,10 @@ export function NewOrderForm({
             <select
               id="order-customer"
               value={customerId}
-              onChange={(e) => setCustomerId(e.target.value)}
+              onChange={(e) => {
+                setCustomerId(e.target.value);
+                setVehicleId("");
+              }}
               className="h-10 rounded-md border border-border bg-card px-3 text-sm"
             >
               <option value="">Walk-in</option>
@@ -175,6 +190,36 @@ export function NewOrderForm({
               ))}
             </select>
           </div>
+          {trackVehicles && customerId && (
+            <>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="order-vehicle">Vehicle (optional)</Label>
+                <select
+                  id="order-vehicle"
+                  value={vehicleId}
+                  onChange={(e) => setVehicleId(e.target.value)}
+                  className="h-10 rounded-md border border-border bg-card px-3 text-sm"
+                >
+                  <option value="">None</option>
+                  {vehiclesForCustomer.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="order-odometer">Odometer reading (optional)</Label>
+                <Input
+                  id="order-odometer"
+                  type="number"
+                  min="0"
+                  value={odometerReading}
+                  onChange={(e) => setOdometerReading(e.target.value)}
+                />
+              </div>
+            </>
+          )}
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="order-assignee">Handled by (optional)</Label>
             <select

@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { getDefaultMembershipOrRedirect } from "@/lib/organization/actions";
+import { tracksVehicles } from "@/lib/industry/registry";
 import { NewOrderForm } from "./new-order-form";
 
 async function getAccessibleBranches(organizationId: string, membershipId: string, allBranches: boolean) {
@@ -18,7 +19,9 @@ export default async function NewOrderPage({ searchParams }: PageProps<"/orders/
   const params = await searchParams;
   const initialCustomerId = typeof params?.customerId === "string" ? params.customerId : undefined;
 
-  const [branches, customers, members, products, services] = await Promise.all([
+  const trackVehicles = tracksVehicles(membership.organization.industryKey);
+
+  const [branches, customers, members, products, services, vehicles] = await Promise.all([
     getAccessibleBranches(membership.organizationId, membership.id, membership.allBranches),
     db.customer.findMany({
       where: { organizationId: membership.organizationId, archivedAt: null },
@@ -37,6 +40,9 @@ export default async function NewOrderPage({ searchParams }: PageProps<"/orders/
       where: { organizationId: membership.organizationId, archivedAt: null },
       orderBy: { name: "asc" },
     }),
+    trackVehicles
+      ? db.vehicle.findMany({ where: { organizationId: membership.organizationId, archivedAt: null } })
+      : Promise.resolve([]),
   ]);
 
   return (
@@ -66,6 +72,12 @@ export default async function NewOrderPage({ searchParams }: PageProps<"/orders/
           taxRatePercent: s.taxRatePercent.toString(),
         }))}
         initialCustomerId={initialCustomerId}
+        vehicles={vehicles.map((v) => ({
+          id: v.id,
+          customerId: v.customerId,
+          label: `${v.make} ${v.model}${v.plateNumber ? ` · ${v.plateNumber}` : ""}`,
+        }))}
+        trackVehicles={trackVehicles}
       />
     </div>
   );

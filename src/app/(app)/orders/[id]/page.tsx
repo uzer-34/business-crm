@@ -35,6 +35,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
       customer: true,
       branch: true,
       organization: true,
+      vehicle: true,
       items: { include: { product: true, variant: true, service: true } },
       invoices: { orderBy: { createdAt: "desc" }, take: 1 },
     },
@@ -58,6 +59,15 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
             <p className="text-sm text-muted-foreground">
               {order.customer ? order.customer.name : "Walk-in"} · {order.branch.name}
             </p>
+            {order.vehicle && (
+              <p className="text-sm text-muted-foreground">
+                <Link href={`/vehicles/${order.vehicle.id}`} className="hover:underline">
+                  {order.vehicle.make} {order.vehicle.model}
+                  {order.vehicle.plateNumber && ` · ${order.vehicle.plateNumber}`}
+                </Link>
+                {order.odometerReading != null && ` · ${order.odometerReading} mi/km`}
+              </p>
+            )}
           </div>
           <div className="text-right">
             <p className="font-semibold tabular-nums">

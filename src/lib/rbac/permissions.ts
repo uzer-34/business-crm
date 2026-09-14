@@ -68,6 +68,12 @@ export const PERMISSION_CATALOG = [
   { key: "tasks.create", category: "Tasks", description: "Create and assign standalone tasks" },
   { key: "tasks.edit", category: "Tasks", description: "Reassign or complete tasks assigned to others" },
 
+  // Vehicles (Automobile Workshop industry pack)
+  { key: "vehicles.view", category: "Vehicles", description: "View customer vehicles" },
+  { key: "vehicles.create", category: "Vehicles", description: "Add vehicles to a customer" },
+  { key: "vehicles.edit", category: "Vehicles", description: "Edit vehicle details" },
+  { key: "vehicles.archive", category: "Vehicles", description: "Archive vehicles" },
+
   // Reports
   { key: "reports.sales", category: "Reports", description: "View sales reports" },
   { key: "reports.financial", category: "Reports", description: "View financial reports" },
@@ -122,6 +128,10 @@ export const SYSTEM_ROLES = [
       "tasks.view",
       "tasks.create",
       "tasks.edit",
+      "vehicles.view",
+      "vehicles.create",
+      "vehicles.edit",
+      "vehicles.archive",
       "reports.sales",
       "reports.financial",
     ] as PermissionKey[],
@@ -162,6 +172,12 @@ export const SYSTEM_ROLES = [
       // that's enforced in code, not gated by a permission at all.
       "tasks.view",
       "tasks.create",
+      // Logging a customer's vehicle and its details is frontline service-
+      // desk work, same as creating the customer itself; archiving one is
+      // a back-office correction, same split as everywhere else here.
+      "vehicles.view",
+      "vehicles.create",
+      "vehicles.edit",
     ] as PermissionKey[],
   },
 ] as const;

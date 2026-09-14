@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { getDefaultMembershipOrRedirect } from "@/lib/organization/actions";
 import { logoutAction } from "@/lib/auth/actions";
 import { getTerminology } from "@/lib/industry/terminology";
+import { tracksVehicles } from "@/lib/industry/registry";
 import { NotificationBell } from "./notification-bell";
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
@@ -15,6 +16,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     { href: "/customers", label: term.customers },
     { href: "/tasks", label: "Tasks" },
     { href: "/orders", label: term.orders },
+    ...(tracksVehicles(membership.organization.industryKey) ? [{ href: "/vehicles", label: "Vehicles" }] : []),
     { href: "/invoices", label: "Invoices" },
     { href: "/expenses", label: "Expenses" },
     { href: "/products", label: "Products" },

@@ -40,6 +40,7 @@ model User {
   createdInvoices       Invoice[]
   recordedPayments      Payment[]
   recordedExpenses      Expense[]
+  createdVehicles       Vehicle[]
 
   @@map("users")
 }
@@ -137,6 +138,7 @@ model Organization {
   expenses           Expense[]
   notifications      Notification[]
   customFieldDefinitions CustomFieldDefinition[]
+  vehicles           Vehicle[]
 
   @@map("organizations")
 }
@@ -324,6 +326,7 @@ model Customer {
   activities Activity[]
   orders     Order[]
   invoices   Invoice[]
+  vehicles   Vehicle[]
 
   @@index([organizationId, archivedAt])
   @@index([assignedToId])
@@ -754,6 +757,14 @@ model Order {
   // The employee handling this sale ("employee" in brief §23's field list).
   assignedToId    String?
   assignedTo      Membership?   @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
+  // Both nullable and both specific to the Automobile Workshop vertical
+  // (Phase 11) — a generic Order from any other industry just never sets
+  // them. Kept on Order itself rather than a separate "JobCard" table
+  // because an order IS a job card there: same lifecycle, same line items
+  // (parts = Product, labour = Service), same fulfillment/payment flow.
+  vehicleId       String?
+  vehicle         Vehicle?      @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+  odometerReading Int?
   notes           String?
   createdByUserId String
   createdBy       User          @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
@@ -766,7 +777,42 @@ model Order {
   @@unique([organizationId, orderNumber])
   @@index([organizationId, status])
   @@index([customerId])
+  @@index([vehicleId])
   @@map("orders")
+}
+
+// Automobile Workshop's one real vertical-specific entity (Phase 11) — not
+// a generic CustomFieldDefinition, because a vehicle needs a real identity
+// (its own service history via Order.vehicleId, real indexed lookup by
+// plate/VIN) that a JSON key-value pair on Customer can't give it. This is
+// the intended shape of "industry intelligence" per the brief's core
+// principle: a real, purpose-built entity when a vertical genuinely needs
+// one, sitting alongside (not instead of) the generic Customer/Order core.
+model Vehicle {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customerId     String
+  customer       Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  make           String
+  model          String
+  year           Int?
+  // Free text, not a fixed enum — plate formats vary too much by country to
+  // validate meaningfully here (same reasoning as Branch.countryCode).
+  plateNumber    String?
+  vin            String?
+  color          String?
+  notes          String?
+  createdByUserId String
+  createdBy      User         @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+  archivedAt     DateTime?    @db.Timestamptz(3)
+
+  orders Order[]
+
+  @@index([organizationId, customerId, archivedAt])
+  @@index([organizationId, plateNumber])
+  @@map("vehicles")
 }
 
 // Exactly one of productId or serviceId is set — enforced by a CHECK
