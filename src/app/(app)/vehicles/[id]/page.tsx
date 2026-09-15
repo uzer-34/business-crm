@@ -8,6 +8,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatMoney } from "@/lib/format";
 import { ArchiveVehicleButton } from "./archive-vehicle-button";
 import { EditVehicleForm } from "./edit-vehicle-form";
+import { loadFieldLayout, loadFieldValues } from "@/lib/metadata/field-service";
+import { VehicleAttributes } from "./vehicle-attributes";
 
 const STATUS_LABEL: Record<string, string> = {
   PENDING: "Pending",
@@ -30,10 +32,11 @@ export default async function VehiclePage({ params }: PageProps<"/vehicles/[id]"
 
   const term = getTerminology(vehicle.organization.industryKey);
 
-  const serviceHistory = await db.order.findMany({
-    where: { vehicleId: id },
-    orderBy: { createdAt: "desc" },
-  });
+  const [serviceHistory, fieldSections, fieldValues] = await Promise.all([
+    db.order.findMany({ where: { vehicleId: id }, orderBy: { createdAt: "desc" } }),
+    loadFieldLayout(ctx.organizationId, "vehicle", { roleKey: ctx.roleKey }),
+    loadFieldValues(ctx.organizationId, "vehicle", id),
+  ]);
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
@@ -102,6 +105,15 @@ export default async function VehiclePage({ params }: PageProps<"/vehicles/[id]"
           )}
         </CardContent>
       </Card>
+      <VehicleAttributes
+        vehicleId={vehicle.id}
+        organizationId={ctx.organizationId}
+        sections={fieldSections}
+        initialValues={fieldValues}
+        canConfigure={ctx.permissions.has("organization.manage")}
+        canEdit={ctx.permissions.has("vehicles.edit")}
+      />
+
     </div>
   );
 }

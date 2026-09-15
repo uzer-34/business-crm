@@ -5,6 +5,7 @@ import { getTerminology } from "@/lib/industry/terminology";
 import { PageHeader } from "@/components/ui/layout";
 import { Card, CardContent } from "@/components/ui/card";
 import { describeListView } from "@/lib/list-view/query";
+import { loadFieldLayout } from "@/lib/metadata/field-service";
 import { getCustomerList, parseCustomerListQuery, CUSTOMER_LIST_CONFIG } from "@/lib/customer/customer-list";
 import type { FilterDefinition } from "@/components/data-table/filter-bar";
 import { CustomersTable } from "./customers-table";
@@ -35,12 +36,9 @@ export default async function CustomersPage({ searchParams }: PageProps<"/custom
   const params = await searchParams;
   const query = parseCustomerListQuery(params);
 
-  const [result, customFieldDefs, members, branches] = await Promise.all([
+  const [result, fieldSections, members, branches] = await Promise.all([
     getCustomerList(membership.organizationId, query),
-    db.customFieldDefinition.findMany({
-      where: { organizationId: membership.organizationId, entityType: "CUSTOMER", archivedAt: null },
-      orderBy: { createdAt: "asc" },
-    }),
+    loadFieldLayout(membership.organizationId, "customer", { roleKey: ctx.roleKey }),
     db.membership.findMany({
       where: { organizationId: membership.organizationId, status: "ACTIVE" },
       include: { user: { select: { name: true, email: true, phone: true } } },
@@ -96,14 +94,6 @@ export default async function CustomersPage({ searchParams }: PageProps<"/custom
   });
 
   const canCreate = ctx.permissions.has("customers.create");
-  const customFields = customFieldDefs.map((field) => ({
-    id: field.id,
-    key: field.key,
-    label: field.label,
-    fieldType: field.fieldType,
-    options: (field.options as string[] | null) ?? null,
-    required: field.required,
-  }));
 
   /*
    * Two independent instances: the header one honours ?new=1 (the link the
@@ -117,7 +107,7 @@ export default async function CustomersPage({ searchParams }: PageProps<"/custom
         organizationId={membership.organizationId}
         customerNoun={term.customer}
         defaultOpen={autoOpen}
-        customFields={customFields}
+        fieldSections={fieldSections}
       />
     ) : null;
 

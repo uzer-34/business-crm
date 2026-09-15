@@ -4,9 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input, NativeSelect } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/form";
 import { Alert } from "@/components/ui/feedback";
 import {
@@ -19,26 +17,18 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { DynamicForm, type DynamicSection, type DynamicValues } from "@/components/metadata/dynamic-form";
 import { createCustomerAction } from "@/lib/customer/actions";
-import { setCustomFieldValueAction } from "@/lib/industry/custom-field-actions";
-
-type CustomFieldDefinition = {
-  id: string;
-  key: string;
-  label: string;
-  fieldType: "TEXT" | "NUMBER" | "DATE" | "BOOLEAN" | "SELECT";
-  options: string[] | null;
-  required: boolean;
-};
 
 export function NewCustomerForm({
   organizationId,
-  customFields = [],
+  fieldSections = [],
   customerNoun,
   defaultOpen = false,
 }: {
   organizationId: string;
-  customFields?: CustomFieldDefinition[];
+  /** Configured fields for the customer entity, resolved on the server. */
+  fieldSections?: DynamicSection[];
   customerNoun: string;
   defaultOpen?: boolean;
 }) {
@@ -48,7 +38,7 @@ export function NewCustomerForm({
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [fieldValues, setFieldValues] = useState<Record<string, string | boolean>>({});
+  const [fieldValues, setFieldValues] = useState<DynamicValues>({});
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -69,30 +59,15 @@ export function NewCustomerForm({
             event.preventDefault();
             setError(null);
             startTransition(async () => {
-              const result = await createCustomerAction(organizationId, {
-                type,
-                name,
-                email,
-                phone,
-                status: "LEAD",
-                tags: [],
-              });
+              const result = await createCustomerAction(
+                organizationId,
+                { type, name, email, phone, status: "LEAD", tags: [] },
+                fieldValues,
+              );
               if (!result.ok) {
                 setError(result.error);
                 return;
               }
-
-              for (const field of customFields) {
-                const raw = fieldValues[field.id];
-                if (raw === undefined || raw === "") continue;
-                const value = field.fieldType === "NUMBER" ? Number(raw) : raw;
-                await setCustomFieldValueAction(organizationId, {
-                  definitionId: field.id,
-                  entityId: result.data.customerId,
-                  value,
-                });
-              }
-
               setOpen(false);
               router.push(`/customers/${result.data.customerId}`);
             });
@@ -143,14 +118,12 @@ export function NewCustomerForm({
               </FormField>
             </div>
 
-            {customFields.map((field) => (
-              <CustomFieldInput
-                key={field.id}
-                field={field}
-                value={fieldValues[field.id]}
-                onChange={(value) => setFieldValues((previous) => ({ ...previous, [field.id]: value }))}
-              />
-            ))}
+            {/* Everything the business has configured for customers, rendered from metadata. */}
+            <DynamicForm
+              sections={fieldSections}
+              values={fieldValues}
+              onChange={(fieldId, value) => setFieldValues((previous) => ({ ...previous, [fieldId]: value }))}
+            />
 
             {error && <Alert tone="danger">{error}</Alert>}
           </DialogBody>
@@ -166,60 +139,5 @@ export function NewCustomerForm({
         </form>
       </DialogContent>
     </Dialog>
-  );
-}
-
-/**
- * Renders one organization-defined field by its stored type. Milestone 2's
- * attribute engine generalizes this into a shared renderer; keeping the switch
- * in one component now means there is a single place for it to move from.
- */
-function CustomFieldInput({
-  field,
-  value,
-  onChange,
-}: {
-  field: CustomFieldDefinition;
-  value: string | boolean | undefined;
-  onChange: (value: string | boolean) => void;
-}) {
-  if (field.fieldType === "BOOLEAN") {
-    const id = `custom-${field.id}`;
-    return (
-      <div className="flex items-center gap-2">
-        <Checkbox id={id} checked={Boolean(value)} onCheckedChange={(checked) => onChange(checked === true)} />
-        <Label htmlFor={id} required={field.required}>
-          {field.label}
-        </Label>
-      </div>
-    );
-  }
-
-  return (
-    <FormField label={field.label} required={field.required}>
-      {(fieldProps) =>
-        field.fieldType === "SELECT" ? (
-          <NativeSelect
-            {...fieldProps}
-            value={(value as string) ?? ""}
-            onChange={(event) => onChange(event.target.value)}
-          >
-            <option value="">Select…</option>
-            {(field.options ?? []).map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </NativeSelect>
-        ) : (
-          <Input
-            {...fieldProps}
-            type={field.fieldType === "NUMBER" ? "number" : field.fieldType === "DATE" ? "date" : "text"}
-            value={(value as string) ?? ""}
-            onChange={(event) => onChange(event.target.value)}
-          />
-        )
-      }
-    </FormField>
   );
 }

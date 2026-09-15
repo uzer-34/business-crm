@@ -11,10 +11,16 @@ import { Timeline } from "@/components/timeline/timeline";
 import type { TimelineEvent } from "@/lib/activity/timeline";
 import { tabsFor, toTabSlug, type Tab } from "./tabs";
 import { RevealOnScroll } from "@/components/motion/reveal-on-scroll";
-import { assignCustomerAction } from "@/lib/customer/actions";
+import { assignCustomerAction, editCustomerAction } from "@/lib/customer/actions";
 import { addNoteAction } from "@/lib/customer/notes-actions";
 import { createTaskAction, completeTaskAction } from "@/lib/customer/tasks-actions";
-import { setCustomFieldValueAction } from "@/lib/industry/custom-field-actions";
+import { Alert } from "@/components/ui/feedback";
+import {
+  DynamicForm,
+  DynamicFieldSummary,
+  type DynamicSection,
+  type DynamicValues,
+} from "@/components/metadata/dynamic-form";
 import { NewVehicleForm } from "@/app/(app)/vehicles/new-vehicle-form";
 
 type Membership = { id: string; label: string };
@@ -28,20 +34,19 @@ type Task = {
 };
 type OrderSummary = { id: string; orderNumber: string; status: string; total: string };
 type InvoiceSummary = { id: string; invoiceNumber: string; status: string; paymentStatus: string; total: string };
-type CustomFieldSummary = {
-  id: string;
-  label: string;
-  fieldType: "TEXT" | "NUMBER" | "DATE" | "BOOLEAN" | "SELECT";
-  options: string[] | null;
-  required: boolean;
-  value: string | number | boolean | null;
+type CustomerSummary = {
+  type: "INDIVIDUAL" | "BUSINESS";
+  name: string;
+  email: string | null;
+  phone: string | null;
+  status: string;
 };
 type VehicleSummary = { id: string; make: string; model: string; year: number | null; plateNumber: string | null };
 
 
 export function CustomerDetail({
-  organizationId,
   customerId,
+  customer,
   assignedToId,
   members,
   notes,
@@ -50,7 +55,8 @@ export function CustomerDetail({
   activeTab,
   orders,
   invoices,
-  customFields,
+  fieldSections,
+  fieldValues,
   vehicles,
   canAddVehicle,
   currencyCode,
@@ -58,8 +64,8 @@ export function CustomerDetail({
   canAssign,
   canEdit,
 }: {
-  organizationId: string;
   customerId: string;
+  customer: CustomerSummary;
   assignedToId: string | null;
   members: Membership[];
   notes: Note[];
@@ -68,7 +74,8 @@ export function CustomerDetail({
   activeTab: Tab;
   orders: OrderSummary[];
   invoices: InvoiceSummary[];
-  customFields: CustomFieldSummary[];
+  fieldSections: DynamicSection[];
+  fieldValues: DynamicValues;
   vehicles: VehicleSummary[] | null;
   canAddVehicle: boolean;
   currencyCode: string;
@@ -126,14 +133,13 @@ export function CustomerDetail({
                 </NativeSelect>
               </div>
             )}
-            {customFields.length > 0 && (
-              <CustomFieldsSection
-                organizationId={organizationId}
-                customerId={customerId}
-                fields={customFields}
-                canEdit={canEdit}
-              />
-            )}
+            <CustomFieldsSection
+              customerId={customerId}
+              sections={fieldSections}
+              initialValues={fieldValues}
+              customer={customer}
+              canEdit={canEdit}
+            />
             <div>
               <h3 className="mb-3 text-[13px] font-semibold">Recent activity</h3>
               <Timeline events={timeline.slice(0, 5)} />
@@ -281,96 +287,87 @@ function OrdersTab({
   );
 }
 
+/**
+ * Configured customer attributes, rendered by the metadata engine and saved
+ * through editCustomerAction so the same server-side validation applies here
+ * as on the create form.
+ */
 function CustomFieldsSection({
-  organizationId,
   customerId,
-  fields,
+  sections,
+  initialValues,
+  customer,
   canEdit,
 }: {
-  organizationId: string;
   customerId: string;
-  fields: CustomFieldSummary[];
+  sections: DynamicSection[];
+  initialValues: DynamicValues;
+  customer: { type: "INDIVIDUAL" | "BUSINESS"; name: string; email: string | null; phone: string | null; status: string };
   canEdit: boolean;
 }) {
   const router = useRouter();
-  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [values, setValues] = useState<DynamicValues>(initialValues);
   const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [isPending, startTransition] = useTransition();
 
-  async function save(field: CustomFieldSummary, raw: string | boolean) {
-    setError(null);
-    setPendingId(field.id);
-    const value = field.fieldType === "NUMBER" && raw !== "" ? Number(raw) : raw === "" ? null : raw;
-    const result = await setCustomFieldValueAction(organizationId, {
-      definitionId: field.id,
-      entityId: customerId,
-      value,
-    });
-    setPendingId(null);
-    if (!result.ok) {
-      setError(result.error);
-      return;
-    }
-    router.refresh();
+  if (sections.length === 0) return null;
+
+  if (!canEdit) {
+    return (
+      <div className="border-t border-border pt-4">
+        <DynamicFieldSummary sections={sections} values={values} />
+      </div>
+    );
   }
 
   return (
-    <div className="flex flex-col gap-3 border-t border-border pt-4">
-      <p className="text-sm font-medium">Custom fields</p>
-      {error && <p className="text-sm text-danger">{error}</p>}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {fields.map((field) => (
-          <div key={field.id} className="flex flex-col gap-1.5">
-            <label htmlFor={`view-custom-${field.id}`} className="text-sm text-muted-foreground">
-              {field.label}
-              {field.required && " *"}
-            </label>
-            {!canEdit ? (
-              <p className="text-sm">{formatFieldValue(field)}</p>
-            ) : field.fieldType === "BOOLEAN" ? (
-              <input
-                id={`view-custom-${field.id}`}
-                type="checkbox"
-                defaultChecked={field.value === true}
-                disabled={pendingId === field.id}
-                onChange={(e) => void save(field, e.target.checked)}
-              />
-            ) : field.fieldType === "SELECT" ? (
-              <select
-                id={`view-custom-${field.id}`}
-                defaultValue={(field.value as string) ?? ""}
-                disabled={pendingId === field.id}
-                onChange={(e) => void save(field, e.target.value)}
-                className="h-10 rounded-md border border-border bg-card px-3 text-sm"
-              >
-                <option value="">—</option>
-                {(field.options ?? []).map((opt) => (
-                  <option key={opt} value={opt}>
-                    {opt}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <Input
-                id={`view-custom-${field.id}`}
-                type={field.fieldType === "NUMBER" ? "number" : field.fieldType === "DATE" ? "date" : "text"}
-                defaultValue={field.value != null ? String(field.value) : ""}
-                disabled={pendingId === field.id}
-                onBlur={(e) => void save(field, e.target.value)}
-              />
-            )}
-          </div>
-        ))}
+    <form
+      className="flex flex-col gap-3 border-t border-border pt-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        setError(null);
+        setSaved(false);
+        startTransition(async () => {
+          const result = await editCustomerAction(
+            customerId,
+            {
+              type: customer.type,
+              name: customer.name,
+              email: customer.email ?? "",
+              phone: customer.phone ?? "",
+              status: customer.status,
+              tags: [],
+            },
+            values,
+          );
+          if (!result.ok) {
+            setError(result.error);
+            return;
+          }
+          setSaved(true);
+          router.refresh();
+        });
+      }}
+    >
+      <DynamicForm
+        sections={sections}
+        values={values}
+        onChange={(fieldId, value) => {
+          setSaved(false);
+          setValues((previous) => ({ ...previous, [fieldId]: value }));
+        }}
+      />
+      {error && <Alert tone="danger">{error}</Alert>}
+      <div className="flex items-center gap-2">
+        <Button type="submit" size="sm" loading={isPending}>
+          {isPending ? "Saving…" : "Save details"}
+        </Button>
+        {saved && <span className="text-[12px] text-success">Saved</span>}
       </div>
-    </div>
+    </form>
   );
 }
-
-function formatFieldValue(field: CustomFieldSummary): string {
-  if (field.value === null || field.value === undefined) return "—";
-  if (field.fieldType === "BOOLEAN") return field.value ? "Yes" : "No";
-  return String(field.value);
-}
-
 
 function NotesTab({ customerId, notes, canEdit }: { customerId: string; notes: Note[]; canEdit: boolean }) {
   const router = useRouter();

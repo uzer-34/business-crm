@@ -6,12 +6,15 @@ import { loadTenantContext, requirePermission, ForbiddenError } from "@/lib/rbac
 import { createCustomerSchema, editCustomerSchema } from "@/lib/validation/customer";
 import { logActivity } from "./activity";
 import { recordAudit } from "@/lib/audit/record";
+import { prepareFieldValues } from "@/lib/metadata/save-values";
 import { notifyMembership } from "@/lib/notifications/notify";
 import type { ActionResult } from "@/lib/auth/actions";
 
 export async function createCustomerAction(
   organizationId: string,
   input: unknown,
+  /** Configured field values, keyed by field id. Validated server-side. */
+  fieldValues?: Record<string, unknown>,
 ): Promise<ActionResult<{ customerId: string }>> {
   const user = await getCurrentUser();
   if (!user) return { ok: false, error: "Not signed in" };
@@ -32,6 +35,9 @@ export async function createCustomerAction(
   }
 
   const { email, ...rest } = parsed.data;
+
+  const prepared = await prepareFieldValues(ctx.organizationId, "customer", fieldValues);
+  if (!prepared.ok) return { ok: false, error: prepared.error };
 
   const customer = await db.$transaction(async (tx) => {
     const created = await tx.customer.create({
@@ -58,6 +64,8 @@ export async function createCustomerAction(
       targetType: "Customer",
       targetId: created.id,
     });
+
+    await prepared.apply(tx, created.id);
 
     return created;
   });
@@ -140,7 +148,11 @@ export async function assignCustomerAction(
   return { ok: true, data: undefined };
 }
 
-export async function editCustomerAction(customerId: string, input: unknown): Promise<ActionResult> {
+export async function editCustomerAction(
+  customerId: string,
+  input: unknown,
+  fieldValues?: Record<string, unknown>,
+): Promise<ActionResult> {
   const user = await getCurrentUser();
   if (!user) return { ok: false, error: "Not signed in" };
 
@@ -162,8 +174,12 @@ export async function editCustomerAction(customerId: string, input: unknown): Pr
 
   const { email, ...rest } = parsed.data;
 
+  const prepared = await prepareFieldValues(ctx.organizationId, "customer", fieldValues);
+  if (!prepared.ok) return { ok: false, error: prepared.error };
+
   await db.$transaction(async (tx) => {
     await tx.customer.update({ where: { id: customerId }, data: { email: email || null, ...rest } });
+    await prepared.apply(tx, customerId);
     await logActivity(tx, {
       organizationId: ctx.organizationId,
       subjectType: "Customer",

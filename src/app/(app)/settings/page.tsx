@@ -1,20 +1,12 @@
-import { db } from "@/lib/db";
+import Link from "next/link";
+import { ArrowRight, FolderTree, SlidersHorizontal } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getDefaultMembershipOrRedirect } from "@/lib/organization/actions";
 import { loadTenantContext } from "@/lib/rbac/guard";
 import { INDUSTRIES } from "@/lib/industry/registry";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { PageHeader } from "@/components/ui/layout";
 import { IndustryForm } from "./industry-form";
-import { CustomFieldForm } from "./custom-field-form";
-import { ArchiveFieldButton } from "./archive-field-button";
-
-const FIELD_TYPE_LABEL: Record<string, string> = {
-  TEXT: "Text",
-  NUMBER: "Number",
-  DATE: "Date",
-  BOOLEAN: "Yes/No",
-  SELECT: "Dropdown",
-};
 
 export default async function SettingsPage() {
   const { membership } = await getDefaultMembershipOrRedirect();
@@ -22,35 +14,25 @@ export default async function SettingsPage() {
   const ctx = user ? await loadTenantContext(user.id, membership.organizationId) : null;
   if (!ctx) return null;
 
-  const canManage = ctx.permissions.has("organization.manage");
-
-  if (!canManage) {
+  if (!ctx.permissions.has("organization.manage")) {
     return (
       <Card>
-        <CardContent className="py-16 text-center text-sm text-muted-foreground">
-          You don&apos;t have permission to view organization settings.
+        <CardContent className="py-16 text-center text-[13px] text-foreground-muted">
+          You don&apos;t have permission to view business settings.
         </CardContent>
       </Card>
     );
   }
 
-  const customerFields = await db.customFieldDefinition.findMany({
-    where: { organizationId: membership.organizationId, entityType: "CUSTOMER", archivedAt: null },
-    orderBy: { createdAt: "asc" },
-  });
-
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="text-sm text-muted-foreground">{membership.organization.name}</p>
-      </div>
+    <div className="flex max-w-3xl flex-col gap-4">
+      <PageHeader title="Settings" description={membership.organization.name} />
 
       <Card>
         <CardHeader>
           <CardTitle>Industry</CardTitle>
           <CardDescription>
-            Changes how some pages refer to your customers and orders — e.g. an automobile workshop calls an order a
+            Changes how some pages refer to your customers and orders — an automobile workshop calls an order a
             &quot;Job Card&quot;. Doesn&apos;t change any data, only labels.
           </CardDescription>
         </CardHeader>
@@ -58,45 +40,51 @@ export default async function SettingsPage() {
           <IndustryForm
             organizationId={membership.organizationId}
             currentIndustryKey={membership.organization.industryKey}
-            industries={INDUSTRIES.map((i) => ({ key: i.key, label: i.label }))}
+            industries={INDUSTRIES.map((industry) => ({ key: industry.key, label: industry.label }))}
           />
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Custom fields — Customers</CardTitle>
-          <CardDescription>
-            Track anything specific to your business on every customer record (e.g. a vehicle plate number, an
-            allergy list, a membership tier).
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          {customerFields.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No custom fields yet.</p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {customerFields.map((field) => (
-                <div
-                  key={field.id}
-                  className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm"
-                >
-                  <span>
-                    {field.label}
-                    <span className="text-muted-foreground">
-                      {" "}
-                      · {FIELD_TYPE_LABEL[field.fieldType]}
-                      {field.required && " · required"}
-                    </span>
-                  </span>
-                  <ArchiveFieldButton definitionId={field.id} />
-                </div>
-              ))}
-            </div>
-          )}
-          <CustomFieldForm organizationId={membership.organizationId} />
-        </CardContent>
-      </Card>
+      <SettingsLink
+        href="/settings/attributes"
+        icon={<SlidersHorizontal className="size-4" aria-hidden="true" />}
+        title="Attributes"
+        description="Decide what information you capture on customers, products, services and vehicles."
+      />
+
+      <SettingsLink
+        href="/settings/categories"
+        icon={<FolderTree className="size-4" aria-hidden="true" />}
+        title="Categories"
+        description="Organise your catalog, and choose which attributes each category suggests."
+      />
     </div>
+  );
+}
+
+function SettingsLink({
+  href,
+  icon,
+  title,
+  description,
+}: {
+  href: string;
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+}) {
+  return (
+    <Link href={href} className="rounded-lg border border-border bg-surface p-4 transition-colors hover:bg-hover">
+      <div className="flex items-start gap-3">
+        <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md bg-surface-sunken text-foreground-muted">
+          {icon}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold">{title}</p>
+          <p className="mt-0.5 text-[13px] text-foreground-muted">{description}</p>
+        </div>
+        <ArrowRight className="mt-1 size-4 shrink-0 text-foreground-subtle" aria-hidden="true" />
+      </div>
+    </Link>
   );
 }

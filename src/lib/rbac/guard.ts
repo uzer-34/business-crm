@@ -14,6 +14,8 @@ export type TenantContext = {
   membershipId: string;
   organizationId: string;
   roleId: string;
+  /** Stable role key (e.g. "owner"), used for metadata role visibility. */
+  roleKey: string;
   allBranches: boolean;
   permissions: Set<PermissionKey>;
 };
@@ -43,6 +45,7 @@ export async function loadTenantContext(
     membershipId: membership.id,
     organizationId: membership.organizationId,
     roleId: membership.roleId,
+    roleKey: membership.role.key,
     allBranches: membership.allBranches,
     permissions: new Set(
       membership.role.permissions.map((rp) => rp.permission.key as PermissionKey),

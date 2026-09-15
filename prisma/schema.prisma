@@ -137,7 +137,9 @@ model Organization {
   payments           Payment[]
   expenses           Expense[]
   notifications      Notification[]
-  customFieldDefinitions CustomFieldDefinition[]
+  fieldSections          FieldSection[]
+  fieldDefinitions       FieldDefinition[]
+  categoryRecommendations CategoryFieldRecommendation[]
   vehicles           Vehicle[]
 
   @@map("organizations")
@@ -420,15 +422,28 @@ model Category {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   kind           CategoryKind
   name           String
+  // Self-referencing hierarchy. `depth` is denormalized so a tree can be
+  // ordered and indented without walking parents on every read. Nothing
+  // assumes a fixed depth — "Clothing > Men > Shirts" and "Service > Repair"
+  // are both legitimate shapes.
+  parentId       String?
+  parent         Category?    @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children       Category[]   @relation("CategoryHierarchy")
+  depth          Int          @default(0)
   archivedAt     DateTime?    @db.Timestamptz(3)
   createdAt      DateTime     @default(now()) @db.Timestamptz(3)
 
-  products Product[]
-  services Service[]
-  expenses Expense[]
+  products        Product[]
+  services        Service[]
+  expenses        Expense[]
+  recommendations CategoryFieldRecommendation[]
+  fieldScopes     FieldDefinitionCategory[]
 
-  @@unique([organizationId, kind, name])
+  // Names must be unique among siblings, not across the whole kind, so
+  // "Jeans" can exist under both Men and Women.
+  @@unique([organizationId, kind, parentId, name])
   @@index([organizationId, kind, archivedAt])
+  @@index([parentId])
   @@map("categories")
 }
 
@@ -1035,61 +1050,210 @@ model Notification {
 // by hand — that seeding is out of scope until those phases actually exist.
 // ---------------------------------------------------------------------------
 
-// Deliberately starts with just CUSTOMER — the one entity this phase wires
-// end-to-end. Add values as later phases give other entities real custom
-// fields; adding an enum value is a additive, low-risk migration.
-enum CustomFieldEntityType {
-  CUSTOMER
-}
+/*
+ * Metadata / attribute engine.
+ *
+ * Replaces the CUSTOMER-only CustomFieldDefinition/CustomFieldValue pair with
+ * a reusable system: any entity in the code-level entity registry
+ * (src/lib/metadata/entities.ts) can carry configured fields, grouped into
+ * sections, optionally scoped to categories.
+ *
+ * `entityKey` is a string validated against that registry rather than an enum,
+ * so adding an entity is a code change with no migration. The registry is the
+ * versioned source of truth; these tables hold each organization's own
+ * configuration.
+ */
 
-enum CustomFieldType {
+enum FieldDataType {
   TEXT
+  LONG_TEXT
   NUMBER
+  DECIMAL
+  CURRENCY
+  PERCENTAGE
   DATE
+  DATETIME
+  TIME
   BOOLEAN
-  SELECT
+  SINGLE_SELECT
+  MULTI_SELECT
+  PHONE
+  EMAIL
+  URL
+  COUNTRY
+  STATE
+  CITY
+  ADDRESS
+  USER
+  TEAM
+  ORGANIZATION
+  BRANCH
+  RELATIONSHIP
+  FILE
+  IMAGE
 }
 
-model CustomFieldDefinition {
-  id             String                @id @default(cuid())
+/** Where a field came from, which decides who may change or remove it. */
+enum FieldSource {
+  // Shipped by the platform for this entity.
+  SYSTEM
+  // Created by the business itself.
+  CUSTOM
+  // Contributed by an industry package (materialized in Milestone 3).
+  INDUSTRY
+  // Applied from a category's recommended attributes.
+  CATEGORY
+}
+
+model FieldSection {
+  id             String       @id @default(cuid())
   organizationId String
-  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  entityType     CustomFieldEntityType
-  // Stable, URL/DB-safe key (e.g. "vehicle_plate_number"); label is what's
-  // actually shown and can be edited without touching stored values.
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  entityKey      String
   key            String
   label          String
-  fieldType      CustomFieldType
-  // Option labels for fieldType SELECT; unused (and ignored) otherwise.
-  options        Json?
-  required       Boolean               @default(false)
-  archivedAt     DateTime?             @db.Timestamptz(3)
-  createdAt      DateTime              @default(now()) @db.Timestamptz(3)
+  description    String?
+  displayOrder   Int          @default(0)
+  archivedAt     DateTime?    @db.Timestamptz(3)
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
 
-  values CustomFieldValue[]
+  fields FieldDefinition[]
 
-  @@unique([organizationId, entityType, key])
-  @@index([organizationId, entityType, archivedAt])
-  @@map("custom_field_definitions")
+  @@unique([organizationId, entityKey, key])
+  @@index([organizationId, entityKey, archivedAt])
+  @@map("field_sections")
+}
+
+model FieldDefinition {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  entityKey      String
+  // Stable, URL/DB-safe key (e.g. "sleeve_length"); label is what's shown and
+  // can be edited without touching stored values.
+  key            String
+  label          String
+  description    String?
+  placeholder    String?
+  dataType       FieldDataType
+  source         FieldSource   @default(CUSTOM)
+  // Set when the field was created from a code-level attribute template, so a
+  // later package upgrade can recognize its own fields.
+  templateKey    String?
+  isRequired     Boolean       @default(false)
+  defaultValue   Json?
+  displayOrder   Int           @default(0)
+  sectionId      String?
+  section        FieldSection? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  searchable     Boolean       @default(false)
+  filterable     Boolean       @default(false)
+  sortable       Boolean       @default(false)
+  hidden         Boolean       @default(false)
+  /*
+   * Structured constraints, not free text: { min, max, minLength, maxLength,
+   * pattern, step }. Written only through a Zod schema
+   * (src/lib/validation/metadata.ts) and re-validated server-side on every
+   * value write, so this stays a typed record rather than an open blob.
+   */
+  validation     Json?
+  // Empty means every role sees the field; otherwise only these role keys.
+  roleKeys       String[]      @default([])
+  // Set when an industry package contributed the field (Milestone 3).
+  industryKey    String?
+  archivedAt     DateTime?     @db.Timestamptz(3)
+  createdAt      DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime      @updatedAt @db.Timestamptz(3)
+
+  options    FieldOption[]
+  values     FieldValue[]
+  categories FieldDefinitionCategory[]
+
+  @@unique([organizationId, entityKey, key])
+  @@index([organizationId, entityKey, archivedAt])
+  @@index([sectionId])
+  @@map("field_definitions")
+}
+
+/**
+ * Scopes a field to specific categories — the conditional-attribute
+ * foundation. A field with no rows here applies to every record of its entity;
+ * with rows, it only applies to records in those categories (e.g. Sleeve and
+ * Collar apply to Shirts but not to Jeans). Deliberately not a rules engine:
+ * richer IF/THEN conditions can build on this without migrating it.
+ */
+model FieldDefinitionCategory {
+  id                String          @id @default(cuid())
+  fieldDefinitionId String
+  fieldDefinition   FieldDefinition @relation(fields: [fieldDefinitionId], references: [id], onDelete: Cascade)
+  categoryId        String
+  category          Category        @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([fieldDefinitionId, categoryId])
+  @@index([categoryId])
+  @@map("field_definition_categories")
+}
+
+/** Replaces the untyped `options Json` array with real, orderable rows. */
+model FieldOption {
+  id                String          @id @default(cuid())
+  fieldDefinitionId String
+  fieldDefinition   FieldDefinition @relation(fields: [fieldDefinitionId], references: [id], onDelete: Cascade)
+  // Stored value; `label` is what the user sees and can be renamed safely.
+  value             String
+  label             String
+  displayOrder      Int             @default(0)
+  isActive          Boolean         @default(true)
+  metadata          Json?
+
+  @@unique([fieldDefinitionId, value])
+  @@index([fieldDefinitionId, isActive])
+  @@map("field_options")
 }
 
 // Polymorphic on purpose (entityId is a free-standing id, not a real FK) —
-// same "subjectId" pattern Activity already uses, since a single value table
-// FK-ing to every possible entity table isn't practical in Postgres. The
-// (definitionId, entityType) already scopes this to one real table via the
-// definition, so the lack of a DB-level FK on entityId is an accepted
-// tradeoff, not an oversight.
-model CustomFieldValue {
-  id           String                @id @default(cuid())
-  definitionId String
-  definition   CustomFieldDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
-  entityId     String
-  value        Json
-  updatedAt    DateTime              @updatedAt @db.Timestamptz(3)
+// the same pattern Activity already uses, since one value table FK-ing to
+// every possible entity table isn't practical in Postgres. The definition
+// scopes each row to one entity and one organization, so the missing
+// DB-level FK on entityId is an accepted tradeoff, not an oversight.
+model FieldValue {
+  id                String          @id @default(cuid())
+  fieldDefinitionId String
+  fieldDefinition   FieldDefinition @relation(fields: [fieldDefinitionId], references: [id], onDelete: Cascade)
+  entityId          String
+  value             Json
+  updatedAt         DateTime        @updatedAt @db.Timestamptz(3)
 
-  @@unique([definitionId, entityId])
+  @@unique([fieldDefinitionId, entityId])
   @@index([entityId])
-  @@map("custom_field_values")
+  @@map("field_values")
+}
+
+/**
+ * "Recommended attributes for Shirt". Seeded from the code-level attribute
+ * library when a category matches a known taxonomy, and editable afterwards so
+ * a business can add, reorder or disable recommendations of its own.
+ * `templateKey` points at the code template the field is created from.
+ */
+model CategoryFieldRecommendation {
+  id                String   @id @default(cuid())
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  categoryId        String
+  category          Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  templateKey       String
+  // Denormalized so the list renders without resolving every template.
+  label             String
+  reason            String?
+  recommendRequired Boolean  @default(false)
+  // Pre-ticked in the "apply recommendations" dialog.
+  defaultSelected   Boolean  @default(true)
+  displayOrder      Int      @default(0)
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([categoryId, templateKey])
+  @@index([organizationId, categoryId, isActive])
+  @@map("category_field_recommendations")
 }
 
 model AuditLog {

@@ -7,6 +7,7 @@ import { loadTenantContext } from "@/lib/rbac/guard";
 import { tracksVehicles } from "@/lib/industry/registry";
 import { getTerminology } from "@/lib/industry/terminology";
 import { getTimeline } from "@/lib/activity/timeline";
+import { loadFieldLayout, loadFieldValues } from "@/lib/metadata/field-service";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/feedback";
 import { Button } from "@/components/ui/button";
@@ -44,7 +45,7 @@ export default async function CustomerPage({ params, searchParams }: PageProps<"
   const showVehicles = tracksVehicles(customer.organization.industryKey);
   const activeTab = resolveTab(typeof query.tab === "string" ? query.tab : undefined, showVehicles);
 
-  const [notesRaw, tasksRaw, timeline, membersRaw, ordersRaw, invoicesRaw, customFieldDefs, customFieldValues, vehiclesRaw] =
+  const [notesRaw, tasksRaw, timeline, membersRaw, ordersRaw, invoicesRaw, fieldSections, fieldValues, vehiclesRaw] =
     await Promise.all([
       db.note.findMany({ where: { customerId: id }, include: { author: true }, orderBy: { createdAt: "desc" } }),
       db.task.findMany({
@@ -56,11 +57,8 @@ export default async function CustomerPage({ params, searchParams }: PageProps<"
       db.membership.findMany({ where: { organizationId: ctx.organizationId, status: "ACTIVE" }, include: { user: true } }),
       db.order.findMany({ where: { customerId: id }, orderBy: { createdAt: "desc" } }),
       db.invoice.findMany({ where: { customerId: id }, orderBy: { createdAt: "desc" } }),
-      db.customFieldDefinition.findMany({
-        where: { organizationId: ctx.organizationId, entityType: "CUSTOMER", archivedAt: null },
-        orderBy: { createdAt: "asc" },
-      }),
-      db.customFieldValue.findMany({ where: { entityId: id } }),
+      loadFieldLayout(ctx.organizationId, "customer", { roleKey: ctx.roleKey }),
+      loadFieldValues(ctx.organizationId, "customer", id),
       showVehicles
         ? db.vehicle.findMany({ where: { customerId: id, archivedAt: null }, orderBy: { createdAt: "desc" } })
         : Promise.resolve([]),
@@ -107,16 +105,6 @@ export default async function CustomerPage({ params, searchParams }: PageProps<"
     model: v.model,
     year: v.year,
     plateNumber: v.plateNumber,
-  }));
-
-  const valueByDefinitionId = new Map(customFieldValues.map((v) => [v.definitionId, v.value]));
-  const customFields = customFieldDefs.map((f) => ({
-    id: f.id,
-    label: f.label,
-    fieldType: f.fieldType,
-    options: (f.options as string[] | null) ?? null,
-    required: f.required,
-    value: (valueByDefinitionId.get(f.id) ?? null) as string | number | boolean | null,
   }));
 
   const owner = membersRaw.find((m) => m.id === customer.assignedToId);
@@ -220,8 +208,14 @@ export default async function CustomerPage({ params, searchParams }: PageProps<"
       </Card>
 
       <CustomerDetail
-        organizationId={customer.organizationId}
         customerId={customer.id}
+        customer={{
+          type: customer.type,
+          name: customer.name,
+          email: customer.email,
+          phone: customer.phone,
+          status: customer.status,
+        }}
         assignedToId={customer.assignedToId}
         members={members}
         notes={notes}
@@ -230,7 +224,8 @@ export default async function CustomerPage({ params, searchParams }: PageProps<"
         activeTab={activeTab}
         orders={orders}
         invoices={invoices}
-        customFields={customFields}
+        fieldSections={fieldSections}
+        fieldValues={fieldValues}
         vehicles={showVehicles ? vehicles : null}
         canAddVehicle={ctx.permissions.has("vehicles.create")}
         currencyCode={customer.organization.currencyCode}

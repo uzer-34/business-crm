@@ -11,6 +11,7 @@ import {
 } from "@/lib/validation/catalog";
 import { findOrCreateCategory } from "./category";
 import { recordAudit } from "@/lib/audit/record";
+import { prepareFieldValues } from "@/lib/metadata/save-values";
 import type { ActionResult } from "@/lib/auth/actions";
 
 function skuFragment(value: string): string {
@@ -264,4 +265,47 @@ export async function generateVariantMatrixAction(
 
   const totalRequested = parsed.data.sizes.length * parsed.data.colors.length;
   return { ok: true, data: { created: toCreate.length, skipped: totalRequested - toCreate.length } };
+}
+
+/**
+ * Saves a product's configured attribute values.
+ *
+ * Fields are resolved server-side for this product's own category, so a client
+ * cannot submit a value for an attribute that does not apply to it.
+ */
+export async function saveProductAttributesAction(
+  productId: string,
+  fieldValues: Record<string, unknown>,
+): Promise<ActionResult> {
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, error: "Not signed in" };
+
+  const loaded = await loadProductContext(user.id, productId);
+  if (!loaded) return { ok: false, error: "Product not found" };
+  const { product, ctx } = loaded;
+
+  try {
+    requirePermission(ctx, "products.edit");
+  } catch (error) {
+    if (error instanceof ForbiddenError) return { ok: false, error: error.message };
+    throw error;
+  }
+
+  const prepared = await prepareFieldValues(ctx.organizationId, "product", fieldValues, {
+    categoryId: product.categoryId,
+  });
+  if (!prepared.ok) return { ok: false, error: prepared.error };
+
+  await db.$transaction(async (tx) => {
+    await prepared.apply(tx, productId);
+    await recordAudit(tx, {
+      organizationId: ctx.organizationId,
+      actorUserId: user.id,
+      action: "product.attributes_updated",
+      targetType: "Product",
+      targetId: productId,
+    });
+  });
+
+  return { ok: true, data: undefined };
 }

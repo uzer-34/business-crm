@@ -9,6 +9,9 @@ import { AddVariantForm } from "./add-variant-form";
 import { VariantMatrixForm } from "./variant-matrix-form";
 import { EditProductForm } from "./edit-product-form";
 import { ArchiveProductButton } from "./archive-product-button";
+import { loadFieldLayout, loadFieldValues } from "@/lib/metadata/field-service";
+import { loadRecommendations } from "@/lib/metadata/category-service";
+import { ProductAttributes } from "./product-attributes";
 
 export default async function ProductPage({ params }: PageProps<"/products/[id]">) {
   const { id } = await params;
@@ -26,6 +29,16 @@ export default async function ProductPage({ params }: PageProps<"/products/[id]"
   if (!ctx) notFound();
 
   const { organization } = product;
+
+  // Fields are resolved for this product's own category, so Sleeve and Collar
+  // reach a shirt without reaching a pair of jeans.
+  const [fieldSections, fieldValues, recommendations] = await Promise.all([
+    loadFieldLayout(ctx.organizationId, "product", { categoryId: product.categoryId, roleKey: ctx.roleKey }),
+    loadFieldValues(ctx.organizationId, "product", product.id),
+    product.categoryId
+      ? loadRecommendations(ctx.organizationId, product.categoryId, "product")
+      : Promise.resolve([]),
+  ]);
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
@@ -113,6 +126,28 @@ export default async function ProductPage({ params }: PageProps<"/products/[id]"
           )}
         </CardContent>
       </Card>
+
+      <ProductAttributes
+        organizationId={ctx.organizationId}
+        productId={product.id}
+        categoryId={product.categoryId}
+        categoryName={product.category?.name ?? null}
+        sections={fieldSections}
+        initialValues={fieldValues}
+        recommendations={recommendations
+          .filter((recommendation) => recommendation.isActive)
+          .map((recommendation) => ({
+            id: recommendation.id,
+            templateKey: recommendation.templateKey,
+            label: recommendation.label,
+            reason: recommendation.reason,
+            recommendRequired: recommendation.recommendRequired,
+            defaultSelected: recommendation.defaultSelected,
+            alreadyApplied: recommendation.alreadyApplied,
+          }))}
+        canConfigure={ctx.permissions.has("organization.manage")}
+        canEdit={ctx.permissions.has("products.edit")}
+      />
     </div>
   );
 }
