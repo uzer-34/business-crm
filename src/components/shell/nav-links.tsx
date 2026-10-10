@@ -42,7 +42,7 @@ export function SidebarNav({ groups, onNavigate }: { groups: NavGroup[]; onNavig
                 className={cn(
                   "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] font-medium transition-colors",
                   active
-                    ? "bg-selected text-foreground"
+                    ? "bg-selected text-accent-subtle-foreground"
                     : "text-foreground-muted hover:bg-hover hover:text-foreground",
                 )}
               >
