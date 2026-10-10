@@ -8,19 +8,23 @@
  * rather than at build time.
  */
 
-export const BASE_TABS = ["Overview", "Activity", "Notes", "Tasks", "Orders", "Invoices"] as const;
+export const BASE_TABS = ["Overview", "Activity", "Notes", "Tasks", "Orders"] as const;
 
-export type Tab = (typeof BASE_TABS)[number] | "Vehicles";
+export type Tab = (typeof BASE_TABS)[number] | "Invoices" | "Account" | "Vehicles";
 
 export function toTabSlug(tab: string): string {
   return tab.toLowerCase();
 }
 
-export function tabsFor(includeVehicles: boolean): Tab[] {
-  return includeVehicles ? [...BASE_TABS, "Vehicles"] : [...BASE_TABS];
+export function tabsFor(includeVehicles: boolean, includeAccount: boolean): Tab[] {
+  return [
+    ...BASE_TABS,
+    ...(includeAccount ? (["Invoices", "Account"] as const) : []),
+    ...(includeVehicles ? (["Vehicles"] as const) : []),
+  ];
 }
 
 /** Resolves ?tab= to a real tab, falling back to Overview for anything unknown. */
-export function resolveTab(raw: string | undefined, includeVehicles: boolean): Tab {
-  return tabsFor(includeVehicles).find((candidate) => toTabSlug(candidate) === raw?.toLowerCase()) ?? "Overview";
+export function resolveTab(raw: string | undefined, includeVehicles: boolean, includeAccount: boolean): Tab {
+  return tabsFor(includeVehicles, includeAccount).find((candidate) => toTabSlug(candidate) === raw?.toLowerCase()) ?? "Overview";
 }

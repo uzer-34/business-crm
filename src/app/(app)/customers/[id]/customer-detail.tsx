@@ -34,6 +34,23 @@ type Task = {
 };
 type OrderSummary = { id: string; orderNumber: string; status: string; total: string };
 type InvoiceSummary = { id: string; invoiceNumber: string; status: string; paymentStatus: string; total: string };
+type AccountTransaction = {
+  id: string;
+  createdAt: string;
+  kind: "sale" | "payment" | "refund";
+  label: string;
+  detail: string;
+  amount: string;
+  balance: string;
+  href: string;
+};
+type AccountStatement = {
+  transactions: AccountTransaction[];
+  billed: string;
+  collected: string;
+  refunded: string;
+  balance: string;
+};
 type CustomerSummary = {
   type: "INDIVIDUAL" | "BUSINESS";
   name: string;
@@ -55,12 +72,14 @@ export function CustomerDetail({
   activeTab,
   orders,
   invoices,
+  accountStatement,
   fieldSections,
   fieldValues,
   vehicles,
   canAddVehicle,
   currencyCode,
   locale,
+  timezone,
   canAssign,
   canEdit,
 }: {
@@ -74,18 +93,20 @@ export function CustomerDetail({
   activeTab: Tab;
   orders: OrderSummary[];
   invoices: InvoiceSummary[];
+  accountStatement: AccountStatement | null;
   fieldSections: DynamicSection[];
   fieldValues: DynamicValues;
   vehicles: VehicleSummary[] | null;
   canAddVehicle: boolean;
   currencyCode: string;
   locale: string;
+  timezone: string;
   canAssign: boolean;
   canEdit: boolean;
 }) {
   const router = useRouter();
   const tab = activeTab;
-  const TABS = tabsFor(vehicles !== null);
+  const TABS = tabsFor(vehicles !== null, accountStatement !== null);
 
   return (
     <div className="flex flex-col gap-4">
@@ -166,6 +187,10 @@ export function CustomerDetail({
 
       {tab === "Invoices" && <InvoicesTab invoices={invoices} currencyCode={currencyCode} locale={locale} />}
 
+      {tab === "Account" && accountStatement && (
+        <AccountTab statement={accountStatement} currencyCode={currencyCode} locale={locale} timezone={timezone} />
+      )}
+
       {tab === "Vehicles" && vehicles !== null && (
         <VehiclesTab customerId={customerId} vehicles={vehicles} canAddVehicle={canAddVehicle} />
       )}
@@ -240,6 +265,81 @@ function InvoicesTab({
         </Link>
       ))}
     </RevealOnScroll>
+  );
+}
+
+function AccountTab({
+  statement,
+  currencyCode,
+  locale,
+  timezone,
+}: {
+  statement: AccountStatement;
+  currencyCode: string;
+  locale: string;
+  timezone: string;
+}) {
+  const formatter = new Intl.NumberFormat(locale, { style: "currency", currency: currencyCode });
+  const dateFormatter = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: timezone });
+  const totals = [
+    { label: "Sales", value: statement.billed },
+    { label: "Payments received", value: statement.collected },
+    { label: "Refunds", value: statement.refunded },
+    { label: "Outstanding balance", value: statement.balance },
+  ];
+
+  return (
+    <div className="flex flex-col gap-4">
+      <section aria-label="Customer account totals" className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {totals.map((total, index) => (
+          <Card key={total.label}>
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground">{total.label}</p>
+              <p className={`mt-1 text-lg font-semibold tabular-nums ${index === 3 && Number(total.value) > 0 ? "text-danger" : ""}`}>
+                {formatter.format(Number(total.value))}
+              </p>
+            </CardContent>
+          </Card>
+        ))}
+      </section>
+
+      <Card>
+        <CardContent className="p-0">
+          <div className="border-b border-border px-4 py-3">
+            <h2 className="text-sm font-semibold">Account statement</h2>
+            <p className="mt-1 text-xs text-muted-foreground">Sales, payments, and refunds across your accessible branches.</p>
+          </div>
+          {statement.transactions.length === 0 ? (
+            <p className="px-4 py-10 text-center text-sm text-muted-foreground">No account activity yet.</p>
+          ) : (
+            <div className="divide-y divide-border px-4">
+              {statement.transactions.map((transaction) => {
+                const amount = Number(transaction.amount);
+                const isCredit = transaction.kind === "payment";
+                return (
+                  <Link key={transaction.id} href={transaction.href} className="block rounded-md outline-none focus-visible:ring-2 focus-visible:ring-accent">
+                    <div className="flex flex-wrap items-center justify-between gap-3 py-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">{transaction.label}</p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {transaction.detail} · {dateFormatter.format(new Date(transaction.createdAt))}
+                        </p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className={`text-sm font-semibold tabular-nums ${isCredit ? "text-success" : "text-danger"}`}>
+                          {amount < 0 ? "−" : "+"}{formatter.format(Math.abs(amount))}
+                        </p>
+                        <p className="text-xs text-muted-foreground">Due {formatter.format(Number(transaction.balance))}</p>
+                      </div>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 

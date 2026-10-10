@@ -285,6 +285,11 @@ Supplier -> PurchaseOrder -> receiving -> Inventory -> supplier balance
   events into the invoice's payment ledger in the same transaction; cashbook
   reads only the invoice ledger afterward, so a receipt appears once. Order
   payment and invoice creation serialize on the order row.
+- **Customer account statements use those same ledgers.** The customer
+  Account tab combines issued invoices, not-yet-invoiced orders, receipts,
+  and refunds, with a running due balance scoped to branches the member can
+  access. An order moves from the order ledger to its invoice ledger once,
+  so its sale and receipts are not duplicated.
 - Money math for PO totals uses `Prisma.Decimal` arithmetic
   (`new Prisma.Decimal(unitCost).times(qty)`, chained `.plus()`), not raw
   JS floats — avoids floating-point drift when summing many line items,
