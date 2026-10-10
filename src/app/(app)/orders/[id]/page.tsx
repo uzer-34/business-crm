@@ -26,7 +26,7 @@ const PAYMENT_LABEL: Record<string, string> = {
   PAID: "Paid",
 };
 
-export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
+export default async function OrderPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
   const user = await getCurrentUser();
@@ -41,6 +41,7 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
       vehicle: true,
       items: { include: { product: true, variant: true, service: true } },
       invoices: { orderBy: { createdAt: "desc" }, take: 1 },
+      payments: { orderBy: { createdAt: "desc" }, include: { recordedBy: true } },
     },
   });
   if (!order) notFound();
@@ -148,11 +149,30 @@ export default async function OrderPage({ params }: PageProps<"/orders/[id]">) {
             <span>Outstanding</span>
             <span>{formatMoney(outstanding.toString(), organization.currencyCode, organization.locale)}</span>
           </div>
-          {canFulfill && outstanding.greaterThan(0) && (
+          {canFulfill && !existingInvoice && outstanding.greaterThan(0) && (
             <OrderPaymentForm orderId={order.id} outstanding={outstanding.toString()} />
           )}
-          {canFulfill && new Prisma.Decimal(order.amountPaid).greaterThan(0) && (
+          {canFulfill && !existingInvoice && new Prisma.Decimal(order.amountPaid).greaterThan(0) && (
             <RefundOrderPaymentForm orderId={order.id} amountPaid={order.amountPaid.toString()} />
+          )}
+          {order.payments.length > 0 && (
+            <div className="mt-2 divide-y divide-border rounded-md border border-border px-3">
+              {order.payments.map((payment) => (
+                <div key={payment.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                  <div>
+                    <p className="font-medium">{payment.amount.isNegative() ? "Refund" : "Payment"} · {payment.method.replaceAll("_", " ").toLowerCase()}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {payment.createdAt.toLocaleDateString(organization.locale, { timeZone: organization.timezone })}
+                      {payment.reference ? ` · ${payment.reference}` : ""}
+                      {payment.recordedBy.name ? ` · ${payment.recordedBy.name}` : ""}
+                    </p>
+                  </div>
+                  <span className={`tabular-nums ${payment.amount.isNegative() ? "text-danger" : "text-success"}`}>
+                    {payment.amount.isNegative() ? "−" : "+"}{formatMoney(payment.amount.abs().toString(), organization.currencyCode, organization.locale)}
+                  </span>
+                </div>
+              ))}
+            </div>
           )}
         </CardContent>
       </Card>

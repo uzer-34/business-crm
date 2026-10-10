@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { db } from "@/lib/db";
+import { Prisma } from "@/generated/prisma/client";
 import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext } from "@/lib/rbac/guard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +16,7 @@ const STATUS_LABEL: Record<string, string> = {
   CANCELLED: "Cancelled",
 };
 
-export default async function SupplierPage({ params }: PageProps<"/suppliers/[id]">) {
+export default async function SupplierPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
   const user = await getCurrentUser();
@@ -27,11 +28,26 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
   const ctx = await loadTenantContext(user.id, supplier.organizationId);
   if (!ctx || !ctx.permissions.has("suppliers.view")) notFound();
 
-  const purchaseOrders = await db.purchaseOrder.findMany({
-    where: { supplierId: id },
-    orderBy: { createdAt: "desc" },
-    take: 50,
-  });
+  const purchaseOrderWhere = {
+    organizationId: ctx.organizationId,
+    supplierId: id,
+    ...(ctx.allBranches ? {} : { branch: { membershipBranches: { some: { membershipId: ctx.membershipId } } } }),
+  };
+  const [purchaseOrders, accountTotals] = await Promise.all([
+    db.purchaseOrder.findMany({
+      where: purchaseOrderWhere,
+      include: { branch: true, supplierPayments: { orderBy: { createdAt: "desc" } } },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    }),
+    db.purchaseOrder.aggregate({
+      where: { ...purchaseOrderWhere, status: { not: "CANCELLED" } },
+      _sum: { total: true, amountPaid: true },
+    }),
+  ]);
+  const totalPurchased = new Prisma.Decimal(accountTotals._sum.total ?? 0);
+  const totalPaid = new Prisma.Decimal(accountTotals._sum.amountPaid ?? 0);
+  const outstanding = totalPurchased.minus(totalPaid);
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
@@ -63,6 +79,32 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
 
       <Card>
         <CardHeader>
+          <CardTitle>Supplier account</CardTitle>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div>
+            <p className="text-xs text-muted-foreground">Purchases</p>
+            <p className="mt-1 font-semibold tabular-nums">
+              {formatMoney(totalPurchased.toString(), supplier.organization.currencyCode, supplier.organization.locale)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Paid</p>
+            <p className="mt-1 font-semibold tabular-nums">
+              {formatMoney(totalPaid.toString(), supplier.organization.currencyCode, supplier.organization.locale)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Outstanding</p>
+            <p className="mt-1 font-semibold tabular-nums text-danger">
+              {formatMoney(outstanding.toString(), supplier.organization.currencyCode, supplier.organization.locale)}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Purchase orders</CardTitle>
         </CardHeader>
         <CardContent>
@@ -77,12 +119,17 @@ export default async function SupplierPage({ params }: PageProps<"/suppliers/[id
                       <div>
                         <p className="text-sm font-medium">{po.orderNumber}</p>
                         <p className="text-xs text-muted-foreground">
-                          {STATUS_LABEL[po.status]} · {new Date(po.createdAt).toLocaleDateString()}
+                          {STATUS_LABEL[po.status]} · {po.branch.name} · {new Date(po.createdAt).toLocaleDateString()}
                         </p>
                       </div>
-                      <p className="text-sm font-medium tabular-nums">
-                        {formatMoney(po.total.toString(), supplier.organization.currencyCode, supplier.organization.locale)}
-                      </p>
+                      <div className="text-right">
+                        <p className="text-sm font-medium tabular-nums">
+                          {formatMoney(po.total.toString(), supplier.organization.currencyCode, supplier.organization.locale)}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {po.paymentStatus.replaceAll("_", " ").toLowerCase()} · {po.supplierPayments.length} payment{po.supplierPayments.length === 1 ? "" : "s"}
+                        </p>
+                      </div>
                     </CardContent>
                   </Card>
                 </Link>

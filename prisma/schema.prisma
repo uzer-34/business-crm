@@ -39,6 +39,8 @@ model User {
   createdOrders         Order[]
   createdInvoices       Invoice[]
   recordedPayments      Payment[]
+  recordedOrderPayments OrderPayment[]
+  recordedSupplierPayments SupplierPayment[]
   recordedExpenses      Expense[]
   createdVehicles       Vehicle[]
 
@@ -135,6 +137,7 @@ model Organization {
   orders             Order[]
   invoices           Invoice[]
   payments           Payment[]
+  orderPayments      OrderPayment[]
   expenses           Expense[]
   notifications      Notification[]
   fieldSections          FieldSection[]
@@ -628,11 +631,11 @@ model StockLevel {
 // -> supplier balance. Receiving has no separate "GoodsReceipt" header —
 // InventoryMovement already IS the receipt record (type=PURCHASE, linked via
 // purchaseOrderItemId), so a parallel ledger would just be duplication.
-// Payment tracking here is deliberately a running total + status, not a
-// full Payment ledger with methods/history — that's Phase 7. There is no
-// DRAFT/approval workflow: a PO is live the moment it's created (brief
-// §43 phases this deeper approval-style flow for Phase 11's Automobile
-// Workshop module, not the generic core).
+// Purchase-order payments are an append-only ledger. amountPaid and
+// paymentStatus remain cached projections, updated in the same transaction
+// as each SupplierPayment insert. There is no DRAFT/approval workflow: a PO
+// is live the moment it's created (brief §43 phases that deeper flow for the
+// Automobile Workshop module, not the generic core).
 // ---------------------------------------------------------------------------
 
 model Supplier {
@@ -705,6 +708,7 @@ model PurchaseOrder {
   updatedAt       DateTime            @updatedAt @db.Timestamptz(3)
 
   items PurchaseOrderItem[]
+  supplierPayments SupplierPayment[]
 
   @@unique([organizationId, orderNumber])
   @@index([organizationId, status])
@@ -734,8 +738,8 @@ model PurchaseOrderItem {
 
 // ---------------------------------------------------------------------------
 // Sales (brief §23): Customer -> Order -> Order Items -> Inventory -> Payment.
-// Invoices and a real Payment ledger are Phase 7 — paymentStatus here is the
-// same running-total pattern as PurchaseOrder in Phase 5, not a full engine.
+// Invoice payments are the Phase 7 customer ledger; an Order's amountPaid
+// remains a separate running total used before an invoice exists.
 // Mirrors the Purchasing lifecycle deliberately: no DRAFT/quote workflow (a
 // quote/estimate flow is Phase 11's Automobile Workshop module, not the
 // generic core), and fulfillment is a separate step from creation, same as
@@ -788,6 +792,7 @@ model Order {
 
   items    OrderItem[]
   invoices Invoice[]
+  payments OrderPayment[]
 
   @@unique([organizationId, orderNumber])
   @@index([organizationId, status])
@@ -966,6 +971,46 @@ model Payment {
 
   @@index([invoiceId, createdAt])
   @@map("payments")
+}
+
+// Append-only direct payments on orders that have not yet been invoiced.
+// When an invoice is generated, these events are copied to its Payment ledger
+// and the cashbook switches to that ledger to avoid counting the same receipt twice.
+model OrderPayment {
+  id               String        @id @default(cuid())
+  organizationId   String
+  organization     Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  orderId          String
+  order            Order         @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  amount           Decimal       @db.Decimal(12, 2)
+  method           PaymentMethod
+  reference        String?
+  recordedByUserId String
+  recordedBy       User          @relation(fields: [recordedByUserId], references: [id], onDelete: Restrict)
+  createdAt        DateTime      @default(now()) @db.Timestamptz(3)
+
+  @@index([organizationId, createdAt])
+  @@index([orderId, createdAt])
+  @@map("order_payments")
+}
+
+// Append-only payments made to suppliers. Historical purchase-order totals
+// predate this ledger and remain available through amountPaid, but cannot be
+// reconstructed into dated/method-specific events because those details were
+// never stored.
+model SupplierPayment {
+  id               String        @id @default(cuid())
+  purchaseOrderId  String
+  purchaseOrder    PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  amount           Decimal       @db.Decimal(12, 2)
+  method           PaymentMethod
+  reference        String?
+  recordedByUserId String
+  recordedBy       User          @relation(fields: [recordedByUserId], references: [id], onDelete: Restrict)
+  createdAt        DateTime      @default(now()) @db.Timestamptz(3)
+
+  @@index([purchaseOrderId, createdAt])
+  @@map("supplier_payments")
 }
 
 enum ExpenseStatus {

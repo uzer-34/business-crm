@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { getCurrentUser } from "@/lib/auth/session";
-import { loadTenantContext } from "@/lib/rbac/guard";
+import { assertBranchAccess, ForbiddenError, loadTenantContext } from "@/lib/rbac/guard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatMoney } from "@/lib/format";
 import { ReceiveItemForm } from "./receive-item-form";
@@ -22,7 +22,7 @@ const PAYMENT_LABEL: Record<string, string> = {
   PAID: "Paid",
 };
 
-export default async function PurchaseOrderPage({ params }: PageProps<"/purchase-orders/[id]">) {
+export default async function PurchaseOrderPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
   const user = await getCurrentUser();
@@ -35,16 +35,28 @@ export default async function PurchaseOrderPage({ params }: PageProps<"/purchase
       branch: true,
       organization: true,
       items: { include: { product: true, variant: true } },
+      supplierPayments: { include: { recordedBy: true }, orderBy: { createdAt: "desc" } },
     },
   });
   if (!purchaseOrder) notFound();
 
   const ctx = await loadTenantContext(user.id, purchaseOrder.organizationId);
-  if (!ctx) notFound();
+  if (!ctx || !ctx.permissions.has("purchases.view")) notFound();
+  try {
+    await assertBranchAccess(ctx, purchaseOrder.branchId);
+  } catch (error) {
+    if (error instanceof ForbiddenError) notFound();
+    throw error;
+  }
 
   const { organization } = purchaseOrder;
   const canReceive = ctx.permissions.has("purchases.receive") && purchaseOrder.status !== "CANCELLED";
   const outstanding = new Prisma.Decimal(purchaseOrder.total).minus(purchaseOrder.amountPaid);
+  const recordedPaymentTotal = purchaseOrder.supplierPayments.reduce(
+    (sum, payment) => sum.plus(payment.amount),
+    new Prisma.Decimal(0),
+  );
+  const legacyPaymentTotal = new Prisma.Decimal(purchaseOrder.amountPaid).minus(recordedPaymentTotal);
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
@@ -115,6 +127,41 @@ export default async function PurchaseOrderPage({ params }: PageProps<"/purchase
           </div>
           {canReceive && outstanding.greaterThan(0) && (
             <PaymentForm purchaseOrderId={purchaseOrder.id} outstanding={outstanding.toString()} />
+          )}
+          {purchaseOrder.supplierPayments.length > 0 || legacyPaymentTotal.greaterThan(0) ? (
+            <div className="mt-2 divide-y divide-border rounded-lg border border-border">
+              {legacyPaymentTotal.greaterThan(0) && (
+                <div className="flex flex-wrap items-center justify-between gap-2 p-3 text-sm">
+                  <div>
+                    <p className="font-medium">Previously recorded</p>
+                    <p className="text-xs text-muted-foreground">Original payment date and method were not captured.</p>
+                  </div>
+                  <span className="font-medium tabular-nums">
+                    {formatMoney(legacyPaymentTotal.toString(), organization.currencyCode, organization.locale)}
+                  </span>
+                </div>
+              )}
+              {purchaseOrder.supplierPayments.map((payment) => (
+                <div key={payment.id} className="flex flex-wrap items-center justify-between gap-2 p-3 text-sm">
+                  <div>
+                    <p className="font-medium">
+                      {payment.method.replaceAll("_", " ").toLowerCase().replace(/^./, (letter) => letter.toUpperCase())}
+                      {payment.reference && <span className="text-muted-foreground"> · {payment.reference}</span>}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {new Date(payment.createdAt).toLocaleDateString(organization.locale, { timeZone: organization.timezone })}
+                      {" · "}
+                      {payment.recordedBy.name ?? payment.recordedBy.email ?? "Team member"}
+                    </p>
+                  </div>
+                  <span className="font-medium tabular-nums">
+                    {formatMoney(payment.amount.toString(), organization.currencyCode, organization.locale)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">No payment history has been recorded.</p>
           )}
         </CardContent>
       </Card>

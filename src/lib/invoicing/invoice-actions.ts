@@ -33,6 +33,21 @@ export async function createInvoiceFromOrderAction(orderId: string): Promise<Act
   }
 
   const invoice = await db.$transaction(async (tx) => {
+    // Lock the order before checking its invoice state or copying pre-invoice
+    // receipts. Order-level payment actions take the same row lock, so a
+    // receipt cannot slip in while invoice creation is underway.
+    await tx.order.updateMany({ where: { id: order.id }, data: { updatedAt: new Date() } });
+    const existing = await tx.invoice.findFirst({ where: { orderId: order.id }, select: { id: true } });
+    if (existing) return null;
+
+    const orderPayments = await tx.orderPayment.findMany({ where: { orderId: order.id }, orderBy: { createdAt: "asc" } });
+    const amountPaid = orderPayments.reduce((total, payment) => total.plus(payment.amount), new Prisma.Decimal(0));
+    const paymentStatus = amountPaid.greaterThanOrEqualTo(order.total)
+      ? "PAID"
+      : amountPaid.greaterThan(0)
+        ? "PARTIALLY_PAID"
+        : "UNPAID";
+
     const org = await tx.organization.update({
       where: { id: ctx.organizationId },
       data: { invoiceSequence: { increment: 1 } },
@@ -46,6 +61,8 @@ export async function createInvoiceFromOrderAction(orderId: string): Promise<Act
         customerId: order.customerId,
         branchId: order.branchId,
         invoiceNumber,
+        amountPaid,
+        paymentStatus,
         subtotal: order.subtotal,
         discountTotal: order.discountTotal,
         taxTotal: order.taxTotal,
@@ -65,6 +82,20 @@ export async function createInvoiceFromOrderAction(orderId: string): Promise<Act
       },
     });
 
+    if (orderPayments.length > 0) {
+      await tx.payment.createMany({
+        data: orderPayments.map((payment) => ({
+          organizationId: ctx.organizationId,
+          invoiceId: created.id,
+          amount: payment.amount,
+          method: payment.method,
+          reference: payment.reference,
+          recordedByUserId: payment.recordedByUserId,
+          createdAt: payment.createdAt,
+        })),
+      });
+    }
+
     await tx.auditLog.create({
       data: {
         organizationId: ctx.organizationId,
@@ -78,6 +109,8 @@ export async function createInvoiceFromOrderAction(orderId: string): Promise<Act
 
     return created;
   });
+
+  if (!invoice) return { ok: false, error: "An invoice already exists for this order" };
 
   return { ok: true, data: { invoiceId: invoice.id } };
 }

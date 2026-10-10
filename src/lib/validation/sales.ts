@@ -38,3 +38,9 @@ export const processReturnSchema = z.object({
   quantity: z.coerce.number().int().positive(),
   reason: z.string().trim().max(500).optional(),
 });
+
+export const recordOrderPaymentSchema = z.object({
+  amount: z.coerce.number().positive(),
+  method: z.enum(["CASH", "BANK_TRANSFER", "CARD", "ONLINE", "OTHER"]),
+  reference: z.string().trim().max(120).optional().or(z.literal("")),
+});

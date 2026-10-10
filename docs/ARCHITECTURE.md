@@ -271,10 +271,20 @@ Supplier -> PurchaseOrder -> receiving -> Inventory -> supplier balance
   receiving is supported — `quantityReceived` is cumulative, and the PO's
   own `status` (ORDERED -> PARTIALLY_RECEIVED -> RECEIVED) is recomputed
   from all its items after each receipt.
-- **Payment status is a running total, not a ledger.** `amountPaid` +
-  `paymentStatus` on the PO itself — deliberately not a full Payment model
-  with methods/history (that's Phase 7). Overpayment is rejected
-  server-side against the outstanding balance.
+- **Supplier payments are an append-only ledger.** `SupplierPayment` stores
+  each amount, method, reference, date, and recorder. `PurchaseOrder.amountPaid`
+  and `paymentStatus` are cached projections updated in the same transaction.
+  Overpayment is rejected server-side, and a compare-and-update prevents two
+  concurrent receipts from spending the same outstanding balance. Old PO
+  totals remain intact; their method/date history was never captured and is
+  shown as a prior balance rather than fabricated transaction rows.
+- **Direct order payments have a ledger too.** `OrderPayment` stores dated
+  receipts/refunds with method and reference until the order is invoiced. The
+  migration reconstructs existing events from their audit records (their old
+  payment method is unknown, so it is `OTHER`). Invoice creation copies those
+  events into the invoice's payment ledger in the same transaction; cashbook
+  reads only the invoice ledger afterward, so a receipt appears once. Order
+  payment and invoice creation serialize on the order row.
 - Money math for PO totals uses `Prisma.Decimal` arithmetic
   (`new Prisma.Decimal(unitCost).times(qty)`, chained `.plus()`), not raw
   JS floats — avoids floating-point drift when summing many line items,
@@ -861,7 +871,8 @@ code that doesn't match `src/lib/db.ts`.
   org-scoped sequential order number
 - Receiving (partial or full) that creates real `PURCHASE` movements —
   the first thing to use the movement types Phase 4 reserved for this
-- Payment status tracking (running total, not a full ledger)
+- Append-only supplier-payment ledger with method/reference history
+- Supplier account totals for purchases, paid amounts, and outstanding balance
 - `InventoryMovement.purchaseOrderItemId` real FK, upgraded from Phase 4's
   free-text `reference` now that a real table exists to point to
 - `Product.preferredSupplierId` — closes a gap flagged since Phase 3
@@ -1089,8 +1100,8 @@ code that doesn't match `src/lib/db.ts`.
   "UI completeness pass" below); no PO edit UI
 - Supplier now has a real detail page with edit/archive (Phase 14 polish
   pass) — previously suppliers were list-only with no detail route at all
-- No supplier balance report — the outstanding-per-PO figure exists, but
-  nothing rolls it up across all of a supplier's purchase orders yet
+- No purchase bills outside a purchase order, supplier payment terms, or
+  aging schedule; supplier payments are recorded against purchase orders
 - `RETURN` exists as an `InventoryMovementType` value but nothing creates
   it yet; order cancel is real now (same "nothing's happened yet" guard as
   PO cancel — a fulfilled order needs a return, not a cancel); no order
@@ -1104,10 +1115,11 @@ code that doesn't match `src/lib/db.ts`.
   above), a printable credit-note *document* is not
 - No expense edit UI (create/void only, matching Invoice); no recurring
   expenses; no receipt/file upload
-- Financial reporting is a single revenue-vs-expenses card for the current
-  calendar month — no date-range picker, no per-branch or per-category
-  breakdown, no export. Real but intentionally minimal; a fuller report
-  is Phase 13's job (AI Business Intelligence), not this one's
+- Cashbook shows recorded order/invoice receipts and refunds, supplier
+  payments, and expenses with date filtering, branch-scoped entries, and
+  period totals.
+  It has no opening balance, bank reconciliation, cash/bank account model,
+  or export; invoice reminders are not sent automatically.
 - Editing branch assignment and fully removing a membership are both real
   now (see "Second UI completeness pass" below) — suspend/reactivate is
   no longer the only lifecycle action besides role change

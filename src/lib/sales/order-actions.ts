@@ -4,8 +4,7 @@ import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext, requirePermission, assertBranchAccess, ForbiddenError } from "@/lib/rbac/guard";
-import { createOrderSchema, fulfillOrderItemSchema, processReturnSchema } from "@/lib/validation/sales";
-import { recordPaymentSchema } from "@/lib/validation/purchasing";
+import { createOrderSchema, fulfillOrderItemSchema, processReturnSchema, recordOrderPaymentSchema } from "@/lib/validation/sales";
 import { applyStockMovement, getStockQuantity } from "@/lib/inventory/stock";
 import { logActivity } from "@/lib/customer/activity";
 import type { ActionResult } from "@/lib/auth/actions";
@@ -326,7 +325,7 @@ export async function cancelOrderAction(orderId: string): Promise<ActionResult> 
   const user = await getCurrentUser();
   if (!user) return { ok: false, error: "Not signed in" };
 
-  const order = await db.order.findUnique({ where: { id: orderId } });
+  const order = await db.order.findUnique({ where: { id: orderId }, include: { invoices: { select: { id: true }, take: 1 } } });
   if (!order) return { ok: false, error: "Order not found" };
 
   const ctx = await loadTenantContext(user.id, order.organizationId);
@@ -387,15 +386,14 @@ export async function cancelOrderAction(orderId: string): Promise<ActionResult> 
   return { ok: true, data: undefined };
 }
 
-// Order-level mirror of recordOrderPaymentAction, for an order that never
-// got invoiced (Order.amountPaid is tracked directly, no Payment ledger
-// like Invoice has) — see refundInvoicePaymentAction's comment for why
-// this exists now instead of being guessed at earlier.
+// Order-level payment events are used only before an invoice exists. When the
+// order is invoiced, createInvoiceFromOrderAction copies them into the invoice
+// ledger, and these actions direct users to that invoice from then on.
 export async function refundOrderPaymentAction(orderId: string, input: unknown): Promise<ActionResult> {
   const user = await getCurrentUser();
   if (!user) return { ok: false, error: "Not signed in" };
 
-  const order = await db.order.findUnique({ where: { id: orderId } });
+  const order = await db.order.findUnique({ where: { id: orderId }, include: { invoices: { select: { id: true }, take: 1 } } });
   if (!order) return { ok: false, error: "Order not found" };
 
   const ctx = await loadTenantContext(user.id, order.organizationId);
@@ -403,12 +401,17 @@ export async function refundOrderPaymentAction(orderId: string, input: unknown):
 
   try {
     requirePermission(ctx, "sales.fulfill");
+    await assertBranchAccess(ctx, order.branchId);
   } catch (error) {
     if (error instanceof ForbiddenError) return { ok: false, error: error.message };
     throw error;
   }
 
-  const parsed = recordPaymentSchema.safeParse(input);
+  if (order.invoices.length > 0) {
+    return { ok: false, error: "This order has an invoice. Record the refund from the invoice instead." };
+  }
+
+  const parsed = recordOrderPaymentSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
@@ -425,10 +428,29 @@ export async function refundOrderPaymentAction(orderId: string, input: unknown):
       ? "PARTIALLY_PAID"
       : "UNPAID";
 
-  await db.$transaction(async (tx) => {
-    await tx.order.update({
-      where: { id: orderId },
+  const recorded = await db.$transaction(async (tx) => {
+    const locked = await tx.order.updateMany({
+      where: { id: orderId, amountPaid: order.amountPaid },
+      data: { updatedAt: new Date() },
+    });
+    if (locked.count !== 1) return false;
+    if (await tx.invoice.findFirst({ where: { orderId }, select: { id: true } })) return false;
+
+    const updated = await tx.order.updateMany({
+      where: { id: orderId, amountPaid: order.amountPaid },
       data: { amountPaid: newAmountPaid, paymentStatus },
+    });
+    if (updated.count !== 1) return false;
+
+    await tx.orderPayment.create({
+      data: {
+        organizationId: ctx.organizationId,
+        orderId,
+        amount: amount.negated(),
+        method: parsed.data.method,
+        reference: parsed.data.reference || null,
+        recordedByUserId: user.id,
+      },
     });
 
     await tx.auditLog.create({
@@ -438,10 +460,16 @@ export async function refundOrderPaymentAction(orderId: string, input: unknown):
         action: "order.payment_refunded",
         targetType: "Order",
         targetId: orderId,
-        metadata: { amount: amount.toString(), paymentStatus },
+        metadata: { amount: amount.toString(), method: parsed.data.method, reference: parsed.data.reference || null, paymentStatus },
       },
     });
+    return true;
   });
+
+  if (!recorded) {
+    const invoiced = await db.invoice.findFirst({ where: { orderId }, select: { id: true } });
+    return { ok: false, error: invoiced ? "This order has an invoice. Record the refund from the invoice instead." : "The order balance changed. Refresh and try again." };
+  }
 
   return { ok: true, data: undefined };
 }
@@ -450,7 +478,7 @@ export async function recordOrderPaymentAction(orderId: string, input: unknown):
   const user = await getCurrentUser();
   if (!user) return { ok: false, error: "Not signed in" };
 
-  const order = await db.order.findUnique({ where: { id: orderId } });
+  const order = await db.order.findUnique({ where: { id: orderId }, include: { invoices: { select: { id: true }, take: 1 } } });
   if (!order) return { ok: false, error: "Order not found" };
 
   const ctx = await loadTenantContext(user.id, order.organizationId);
@@ -458,12 +486,17 @@ export async function recordOrderPaymentAction(orderId: string, input: unknown):
 
   try {
     requirePermission(ctx, "sales.fulfill");
+    await assertBranchAccess(ctx, order.branchId);
   } catch (error) {
     if (error instanceof ForbiddenError) return { ok: false, error: error.message };
     throw error;
   }
 
-  const parsed = recordPaymentSchema.safeParse(input);
+  if (order.invoices.length > 0) {
+    return { ok: false, error: "This order has an invoice. Record the payment on the invoice instead." };
+  }
+
+  const parsed = recordOrderPaymentSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
@@ -481,10 +514,29 @@ export async function recordOrderPaymentAction(orderId: string, input: unknown):
       ? "PARTIALLY_PAID"
       : "UNPAID";
 
-  await db.$transaction(async (tx) => {
-    await tx.order.update({
-      where: { id: orderId },
+  const recorded = await db.$transaction(async (tx) => {
+    const locked = await tx.order.updateMany({
+      where: { id: orderId, amountPaid: order.amountPaid },
+      data: { updatedAt: new Date() },
+    });
+    if (locked.count !== 1) return false;
+    if (await tx.invoice.findFirst({ where: { orderId }, select: { id: true } })) return false;
+
+    const updated = await tx.order.updateMany({
+      where: { id: orderId, amountPaid: order.amountPaid },
       data: { amountPaid: newAmountPaid, paymentStatus },
+    });
+    if (updated.count !== 1) return false;
+
+    await tx.orderPayment.create({
+      data: {
+        organizationId: ctx.organizationId,
+        orderId,
+        amount,
+        method: parsed.data.method,
+        reference: parsed.data.reference || null,
+        recordedByUserId: user.id,
+      },
     });
 
     await tx.auditLog.create({
@@ -494,10 +546,16 @@ export async function recordOrderPaymentAction(orderId: string, input: unknown):
         action: "order.payment_recorded",
         targetType: "Order",
         targetId: orderId,
-        metadata: { amount: amount.toString(), paymentStatus },
+        metadata: { amount: amount.toString(), method: parsed.data.method, reference: parsed.data.reference || null, paymentStatus },
       },
     });
+    return true;
   });
+
+  if (!recorded) {
+    const invoiced = await db.invoice.findFirst({ where: { orderId }, select: { id: true } });
+    return { ok: false, error: invoiced ? "This order has an invoice. Record the payment on the invoice instead." : "The order balance changed. Refresh and try again." };
+  }
 
   return { ok: true, data: undefined };
 }
