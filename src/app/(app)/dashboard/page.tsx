@@ -1,6 +1,8 @@
 import Link from "next/link";
 import {
   ArrowRight,
+  ArrowDownLeft,
+  ArrowUpRight,
   CheckCircle2,
   Circle,
   Inbox,
@@ -107,8 +109,16 @@ export default async function DashboardPage() {
   const permissions = ctx?.permissions ?? new Set<string>();
   const can = (key: string) => permissions.has(key as never);
   const canViewSales = can("sales.view") || can("reports.sales");
+  const canViewInvoiceBalances = can("invoices.view") || can("reports.financial");
+  const canViewOrderBalances = can("sales.view") || can("reports.financial");
+  const canViewReceivables = canViewInvoiceBalances || canViewOrderBalances;
+  const canViewPayables = can("purchases.view") || can("reports.financial");
+  const canViewOpenBalances = canViewReceivables || canViewPayables;
+  const branchScope = ctx?.allBranches
+    ? {}
+    : { branch: { membershipBranches: { some: { membershipId: ctx?.membershipId ?? "" } } } };
 
-  const [branchCount, employeeCount, customerCount, productCount, orderCount, attentionTasks, lowStock, outstandingInvoices, recentActivity, monthlySales, recentOrders] =
+  const [branchCount, employeeCount, customerCount, productCount, orderCount, attentionTasks, lowStock, outstandingInvoices, recentActivity, monthlySales, recentOrders, receivableTotals, openOrderTotals, payableTotals] =
     await Promise.all([
       db.branch.count({ where: { organizationId: organization.id, archivedAt: null } }),
       db.membership.count({ where: { organizationId: organization.id, status: "ACTIVE" } }),
@@ -140,6 +150,40 @@ export default async function DashboardPage() {
             take: 5,
           })
         : Promise.resolve([]),
+      canViewInvoiceBalances
+        ? db.invoice.aggregate({
+            where: {
+              organizationId: organization.id,
+              status: "ISSUED",
+              paymentStatus: { in: ["UNPAID", "PARTIALLY_PAID"] },
+              ...branchScope,
+            },
+            _sum: { total: true, amountPaid: true },
+          })
+        : Promise.resolve({ _sum: { total: null, amountPaid: null } }),
+      canViewOrderBalances
+        ? db.order.aggregate({
+            where: {
+              organizationId: organization.id,
+              status: { not: "CANCELLED" },
+              paymentStatus: { in: ["UNPAID", "PARTIALLY_PAID"] },
+              invoices: { none: {} },
+              ...branchScope,
+            },
+            _sum: { total: true, amountPaid: true },
+          })
+        : Promise.resolve({ _sum: { total: null, amountPaid: null } }),
+      canViewPayables
+        ? db.purchaseOrder.aggregate({
+            where: {
+              organizationId: organization.id,
+              status: { not: "CANCELLED" },
+              paymentStatus: { in: ["UNPAID", "PARTIALLY_PAID"] },
+              ...branchScope,
+            },
+            _sum: { total: true, amountPaid: true },
+          })
+        : Promise.resolve({ _sum: { total: null, amountPaid: null } }),
     ]);
 
   const term = getTerminology(organization.industryKey);
@@ -160,6 +204,10 @@ export default async function DashboardPage() {
   const setupComplete = setupSteps.every((step) => step.done);
   const hasAttention = attentionTasks.length > 0 || lowStock.length > 0 || outstandingInvoices.length > 0;
   const currentMonth = monthlySales.at(-1);
+  const receivableBalance = new Prisma.Decimal(receivableTotals._sum.total ?? 0)
+    .minus(receivableTotals._sum.amountPaid ?? 0)
+    .plus(new Prisma.Decimal(openOrderTotals._sum.total ?? 0).minus(openOrderTotals._sum.amountPaid ?? 0));
+  const payableBalance = new Prisma.Decimal(payableTotals._sum.total ?? 0).minus(payableTotals._sum.amountPaid ?? 0);
 
   return (
     <div className="flex flex-col gap-5 sm:gap-6">
@@ -251,6 +299,37 @@ export default async function DashboardPage() {
           href={can("employees.view") ? "/employees" : undefined}
         />
       </div>
+
+      {canViewOpenBalances && (
+        <section aria-label="Open business balances" className="flex flex-col gap-3">
+          <div>
+            <h2 className="text-sm font-semibold tracking-tight">Open balances</h2>
+            <p className="text-[13px] text-foreground-muted">What customers owe you and what you owe suppliers.</p>
+          </div>
+          <div className={`grid gap-3 ${canViewReceivables && canViewPayables ? "sm:grid-cols-2" : "sm:max-w-xl sm:grid-cols-2"}`}>
+            {canViewReceivables && (
+              <BalanceCard
+                icon={ArrowDownLeft}
+                label="To collect"
+                description="Unpaid customer sales"
+                value={formatMoney(receivableBalance.toString(), organization.currencyCode, organization.locale)}
+                href={can("invoices.view") ? "/invoices" : can("sales.view") ? "/orders" : undefined}
+                tone="accent"
+              />
+            )}
+            {canViewPayables && (
+              <BalanceCard
+                icon={ArrowUpRight}
+                label="To pay"
+                description="Unpaid supplier purchases"
+                value={formatMoney(payableBalance.toString(), organization.currencyCode, organization.locale)}
+                href={can("purchases.view") ? "/purchase-orders" : undefined}
+                tone="warning"
+              />
+            )}
+          </div>
+        </section>
+      )}
 
       {!setupComplete && (
         <Card>
@@ -507,6 +586,48 @@ function MetricCard({
   );
 }
 
+function BalanceCard({
+  icon: Icon,
+  label,
+  description,
+  value,
+  href,
+  tone,
+}: {
+  icon: LucideIcon;
+  label: string;
+  description: string;
+  value: string;
+  href?: string;
+  tone: "accent" | "warning";
+}) {
+  const toneClasses = tone === "accent"
+    ? "bg-accent-subtle text-accent-subtle-foreground"
+    : "bg-warning-subtle text-warning";
+  const className = "flex min-h-24 items-center justify-between gap-4 rounded-2xl border border-border bg-surface p-4 shadow-raised transition-colors";
+  const content = (
+    <>
+      <span className={`flex size-11 shrink-0 items-center justify-center rounded-full ${toneClasses}`}>
+        <Icon className="size-5" aria-hidden="true" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[12px] text-foreground-muted">{label}</span>
+        <span className="tabular mt-0.5 block truncate text-lg font-semibold tracking-tight">{value}</span>
+        <span className="mt-0.5 block truncate text-[11px] text-foreground-subtle">{description}</span>
+      </span>
+      {href && <ArrowRight className="size-4 shrink-0 text-foreground-subtle transition-transform group-hover:translate-x-0.5" aria-hidden="true" />}
+    </>
+  );
+
+  return href ? (
+    <Link href={href} className={`${className} group hover:border-border-strong hover:shadow-overlay`}>
+      {content}
+    </Link>
+  ) : (
+    <div className={className}>{content}</div>
+  );
+}
+
 function MonthlySalesChart({
   months,
   currencyCode,
@@ -581,3 +702,4 @@ function AttentionRow({
     </Link>
   );
 }
+
