@@ -43,7 +43,11 @@ export function parseCustomerListQuery(params: RawSearchParams): ListQuery {
  * so `organizationId` is always an explicit argument rather than something a
  * caller can forget.
  */
-export function buildCustomerWhere(organizationId: string, query: ListQuery): Prisma.CustomerWhereInput {
+export function buildCustomerWhere(
+  organizationId: string,
+  query: ListQuery,
+  accessibleBranchIds: readonly string[] = [],
+): Prisma.CustomerWhereInput {
   const where: Prisma.CustomerWhereInput = { organizationId };
 
   // Archived records are hidden unless explicitly asked for, so a normal list
@@ -53,11 +57,23 @@ export function buildCustomerWhere(organizationId: string, query: ListQuery): Pr
   if (query.filters.status) where.status = query.filters.status as Prisma.CustomerWhereInput["status"];
   if (query.filters.type) where.type = query.filters.type as Prisma.CustomerWhereInput["type"];
   if (query.filters.assignedToId) where.assignedToId = query.filters.assignedToId;
-  if (query.filters.branchId) where.branchId = query.filters.branchId;
+
+  // Null branch scope is organization-wide by design. Branch-scoped rows are
+  // visible only for branches explicitly resolved for this membership.
+  const branchPredicate: Prisma.CustomerWhereInput = query.filters.branchId
+    ? {
+        branchId: accessibleBranchIds.includes(query.filters.branchId)
+          ? query.filters.branchId
+          : { in: [] },
+      }
+    : { OR: [{ branchId: null }, { branchId: { in: [...accessibleBranchIds] } }] };
+  where.AND = [branchPredicate];
 
   if (query.search) {
     const contains = { contains: query.search, mode: "insensitive" as const };
-    where.OR = [{ name: contains }, { companyName: contains }, { email: contains }, { phone: contains }];
+    where.AND.push({
+      OR: [{ name: contains }, { companyName: contains }, { email: contains }, { phone: contains }],
+    });
   }
 
   return where;
@@ -75,8 +91,12 @@ function buildOrderBy(query: ListQuery): Prisma.CustomerOrderByWithRelationInput
   }
 }
 
-export async function getCustomerList(organizationId: string, query: ListQuery): Promise<ListResult<CustomerListRow>> {
-  const where = buildCustomerWhere(organizationId, query);
+export async function getCustomerList(
+  organizationId: string,
+  query: ListQuery,
+  accessibleBranchIds: readonly string[] = [],
+): Promise<ListResult<CustomerListRow>> {
+  const where = buildCustomerWhere(organizationId, query, accessibleBranchIds);
   const { skip, take } = toPrismaPagination(query);
 
   const [customers, total] = await Promise.all([

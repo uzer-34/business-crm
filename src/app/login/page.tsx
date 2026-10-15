@@ -5,7 +5,9 @@ import { LoginForm } from "./login-form";
 
 export default async function LoginPage({
   searchParams,
-}: PageProps<"/login">) {
+}: {
+  searchParams: Promise<{ next?: string | string[] }>;
+}) {
   const user = await getCurrentUser();
   if (user) {
     redirect("/dashboard");
@@ -13,7 +15,10 @@ export default async function LoginPage({
 
   const params = await searchParams;
   const nextParam = params?.next;
-  const nextPath = typeof nextParam === "string" && nextParam.startsWith("/") ? nextParam : "/dashboard";
+  const nextPath =
+    typeof nextParam === "string" && nextParam.startsWith("/") && !nextParam.startsWith("//") && !nextParam.includes("\\")
+      ? nextParam
+      : "/dashboard";
 
   return (
     <main className="flex min-h-screen items-center justify-center px-4">

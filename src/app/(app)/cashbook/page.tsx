@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { getDefaultMembershipOrRedirect } from "@/lib/organization/actions";
 import { loadTenantContext } from "@/lib/rbac/guard";
+import { getAccessibleCustomerNames } from "@/lib/customer/access";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -152,7 +153,7 @@ export default async function CashbookPage({
     canSeePayments
       ? db.payment.findMany({
           where: paymentWhere,
-          include: { invoice: { include: { customer: true, branch: true } } },
+          include: { invoice: { include: { branch: true } } },
           orderBy: { createdAt: "desc" },
           take: 250,
         })
@@ -166,7 +167,7 @@ export default async function CashbookPage({
     canSeeOrderPayments
       ? db.orderPayment.findMany({
           where: orderPaymentWhere,
-          include: { order: { include: { customer: true, branch: true } } },
+          include: { order: { include: { branch: true } } },
           orderBy: { createdAt: "desc" },
           take: 250,
         })
@@ -199,11 +200,18 @@ export default async function CashbookPage({
     canSeeExpenses ? db.expense.aggregate({ where: expenseWhere, _sum: { amount: true } }) : Promise.resolve({ _sum: { amount: null } }),
   ]);
 
+  const customerNameById = await getAccessibleCustomerNames(ctx, [
+    ...payments.map((payment) => payment.invoice.customerId),
+    ...orderPayments.map((payment) => payment.order.customerId),
+  ].filter((id): id is string => Boolean(id)));
+
   const entries: CashbookEntry[] = [
     ...payments.map((payment) => ({
       id: `payment-${payment.id}`,
       createdAt: payment.createdAt,
-      label: payment.invoice.customer?.name ?? "Walk-in customer",
+      label: payment.invoice.customerId
+        ? customerNameById.get(payment.invoice.customerId) ?? "Customer unavailable"
+        : "Walk-in customer",
       detail: `Invoice ${payment.invoice.invoiceNumber} · ${payment.invoice.branch.name}`,
       method: payment.method,
       reference: payment.reference,
@@ -214,7 +222,9 @@ export default async function CashbookPage({
     ...orderPayments.map((payment) => ({
       id: `order-payment-${payment.id}`,
       createdAt: payment.createdAt,
-      label: payment.order.customer?.name ?? "Walk-in customer",
+      label: payment.order.customerId
+        ? customerNameById.get(payment.order.customerId) ?? "Customer unavailable"
+        : "Walk-in customer",
       detail: `Order ${payment.order.orderNumber} · ${payment.order.branch.name}`,
       method: payment.method,
       reference: payment.reference,

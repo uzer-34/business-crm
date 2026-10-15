@@ -19,6 +19,7 @@ import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { getDefaultMembershipOrRedirect } from "@/lib/organization/actions";
 import { loadTenantContext } from "@/lib/rbac/guard";
+import { getAccessibleCustomerNames, getAccessibleCustomerWhere } from "@/lib/customer/access";
 import { getTerminology } from "@/lib/industry/terminology";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge, EmptyState } from "@/components/ui/feedback";
@@ -40,10 +41,18 @@ type MonthlySales = {
 
 // Kept outside the component: the React Compiler's purity rule flags impure
 // calls (Date.now/new Date) made directly inside a component body.
-async function loadAttentionTasks(organizationId: string) {
+async function loadAttentionTasks(
+  organizationId: string,
+  customerWhere: Prisma.CustomerWhereInput,
+) {
   const now = Date.now();
   const tasks = await db.task.findMany({
-    where: { organizationId, status: "OPEN", dueAt: { lte: new Date(now + 24 * 60 * 60 * 1000) } },
+    where: {
+      organizationId,
+      status: "OPEN",
+      dueAt: { lte: new Date(now + 24 * 60 * 60 * 1000) },
+      OR: [{ customerId: null }, { customer: { is: customerWhere } }],
+    },
     include: { customer: { select: { id: true, name: true } } },
     orderBy: { dueAt: "asc" },
     take: 5,
@@ -106,6 +115,7 @@ export default async function DashboardPage() {
   const { user, membership } = await getDefaultMembershipOrRedirect();
   const { organization } = membership;
   const ctx = await loadTenantContext(user.id, organization.id);
+  if (!ctx) return null;
   const permissions = ctx?.permissions ?? new Set<string>();
   const can = (key: string) => permissions.has(key as never);
   const canViewSales = can("sales.view") || can("reports.sales");
@@ -114,23 +124,23 @@ export default async function DashboardPage() {
   const canViewReceivables = canViewInvoiceBalances || canViewOrderBalances;
   const canViewPayables = can("purchases.view") || can("reports.financial");
   const canViewOpenBalances = canViewReceivables || canViewPayables;
-  const branchScope = ctx?.allBranches
+  const customerWhere = await getAccessibleCustomerWhere(ctx, { archivedAt: null });
+  const branchScope = ctx.allBranches
     ? {}
-    : { branch: { membershipBranches: { some: { membershipId: ctx?.membershipId ?? "" } } } };
+    : { branch: { membershipBranches: { some: { membershipId: ctx.membershipId } } } };
 
   const [branchCount, employeeCount, customerCount, productCount, orderCount, attentionTasks, lowStock, outstandingInvoices, recentActivity, monthlySales, recentOrders, receivableTotals, openOrderTotals, payableTotals] =
     await Promise.all([
       db.branch.count({ where: { organizationId: organization.id, archivedAt: null } }),
       db.membership.count({ where: { organizationId: organization.id, status: "ACTIVE" } }),
-      db.customer.count({ where: { organizationId: organization.id, archivedAt: null } }),
+      db.customer.count({ where: customerWhere }),
       db.product.count({ where: { organizationId: organization.id, archivedAt: null } }),
       db.order.count({ where: { organizationId: organization.id } }),
-      can("tasks.view") ? loadAttentionTasks(organization.id) : Promise.resolve([]),
+      can("tasks.view") ? loadAttentionTasks(organization.id, customerWhere) : Promise.resolve([]),
       can("inventory.view") ? loadLowStock(organization.id) : Promise.resolve([]),
       can("invoices.view")
         ? db.invoice.findMany({
             where: { organizationId: organization.id, status: "ISSUED", paymentStatus: { in: ["UNPAID", "PARTIALLY_PAID"] } },
-            include: { customer: true },
             orderBy: { issuedAt: "asc" },
             take: 5,
           })
@@ -145,7 +155,6 @@ export default async function DashboardPage() {
       can("sales.view")
         ? db.order.findMany({
             where: { organizationId: organization.id, status: { not: "CANCELLED" } },
-            include: { customer: { select: { name: true } } },
             orderBy: { createdAt: "desc" },
             take: 5,
           })
@@ -185,6 +194,11 @@ export default async function DashboardPage() {
           })
         : Promise.resolve({ _sum: { total: null, amountPaid: null } }),
     ]);
+
+  const customerNameById = await getAccessibleCustomerNames(ctx, [
+    ...outstandingInvoices.map((invoice) => invoice.customerId),
+    ...recentOrders.map((order) => order.customerId),
+  ].filter((id): id is string => Boolean(id)));
 
   const term = getTerminology(organization.industryKey);
   const createActions = ctx ? buildCreateActions({ permissions, industryKey: organization.industryKey }) : [];
@@ -416,7 +430,11 @@ export default async function DashboardPage() {
                           <ShoppingBag className="size-4" aria-hidden="true" />
                         </span>
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[13px] font-medium">{order.customer?.name ?? "Walk-in customer"}</span>
+                          <span className="block truncate text-[13px] font-medium">
+                            {order.customerId
+                              ? customerNameById.get(order.customerId) ?? "Customer unavailable"
+                              : "Walk-in customer"}
+                          </span>
                           <span className="mt-0.5 block truncate text-[11px] text-foreground-muted">
                             {order.orderNumber} · {order.createdAt.toLocaleDateString(organization.locale)}
                           </span>
@@ -481,7 +499,9 @@ export default async function DashboardPage() {
                           key={invoice.id}
                           href={`/invoices/${invoice.id}`}
                           label={invoice.invoiceNumber}
-                          detail={invoice.customer?.name}
+                          detail={invoice.customerId
+                            ? customerNameById.get(invoice.customerId) ?? "Customer unavailable"
+                            : undefined}
                           trailing={
                             <span className="tabular text-[13px] font-medium text-danger">
                               {formatMoney(outstanding.toString(), organization.currencyCode, organization.locale)}
@@ -702,4 +722,3 @@ function AttentionRow({
     </Link>
   );
 }
-

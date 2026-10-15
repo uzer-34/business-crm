@@ -4,7 +4,8 @@ import { Prisma } from "@/generated/prisma/client";
 import { Mail, Phone, Plus, StickyNote } from "lucide-react";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/session";
-import { loadTenantContext } from "@/lib/rbac/guard";
+import { getAccessibleBranchIds } from "@/lib/rbac/guard";
+import { loadAccessibleCustomerContext } from "@/lib/customer/access";
 import { tracksVehicles } from "@/lib/industry/registry";
 import { getTerminology } from "@/lib/industry/terminology";
 import { getTimeline } from "@/lib/activity/timeline";
@@ -56,13 +57,9 @@ export default async function CustomerPage({
   const user = await getCurrentUser();
   if (!user) notFound();
 
-  const customer = await db.customer.findUnique({
-    where: { id },
-    include: { organization: true, branch: { select: { name: true } } },
-  });
-  if (!customer) notFound();
-
-  const ctx = await loadTenantContext(user.id, customer.organizationId);
+  const loaded = await loadAccessibleCustomerContext(user.id, id);
+  if (!loaded) notFound();
+  const { customer, ctx } = loaded;
   if (!ctx || !ctx.permissions.has("customers.view")) notFound();
 
   const term = getTerminology(customer.organization.industryKey);
@@ -71,16 +68,14 @@ export default async function CustomerPage({
     || ctx.permissions.has("payments.record")
     || ctx.permissions.has("sales.fulfill")
     || ctx.permissions.has("reports.financial");
-  const branchIds = ctx.allBranches
-    ? (await db.branch.findMany({ where: { organizationId: ctx.organizationId }, select: { id: true } })).map((branch) => branch.id)
-    : (await db.membershipBranch.findMany({ where: { membershipId: ctx.membershipId }, select: { branchId: true } })).map((branch) => branch.branchId);
+  const branchIds = await getAccessibleBranchIds(ctx);
   const activeTab = resolveTab(typeof query.tab === "string" ? query.tab : undefined, showVehicles, canViewAccount);
 
   const [notesRaw, tasksRaw, timeline, membersRaw, ordersRaw, invoicesRaw, fieldSections, fieldValues, vehiclesRaw] =
     await Promise.all([
-      db.note.findMany({ where: { customerId: id }, include: { author: true }, orderBy: { createdAt: "desc" } }),
+      db.note.findMany({ where: { organizationId: ctx.organizationId, customerId: id }, include: { author: true }, orderBy: { createdAt: "desc" } }),
       db.task.findMany({
-        where: { customerId: id },
+        where: { organizationId: ctx.organizationId, customerId: id },
         include: { assignedTo: { include: { user: true } } },
         orderBy: [{ status: "asc" }, { dueAt: "asc" }],
       }),
@@ -102,7 +97,7 @@ export default async function CustomerPage({
       loadFieldLayout(ctx.organizationId, "customer", { roleKey: ctx.roleKey }),
       loadFieldValues(ctx.organizationId, "customer", id),
       showVehicles
-        ? db.vehicle.findMany({ where: { customerId: id, archivedAt: null }, orderBy: { createdAt: "desc" } })
+        ? db.vehicle.findMany({ where: { organizationId: ctx.organizationId, customerId: id, archivedAt: null }, orderBy: { createdAt: "desc" } })
         : Promise.resolve([]),
     ]);
 

@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getDefaultMembershipOrRedirect } from "@/lib/organization/actions";
 import { loadTenantContext } from "@/lib/rbac/guard";
+import { getAccessibleCustomerWhere } from "@/lib/customer/access";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { RevealOnScroll } from "@/components/motion/reveal-on-scroll";
 import { NewStandaloneTaskForm } from "./new-task-form";
@@ -15,16 +16,29 @@ export default async function TasksPage() {
 
   const canCreate = ctx.permissions.has("tasks.create");
   const canViewTeam = ctx.permissions.has("tasks.view");
+  const customerWhere = await getAccessibleCustomerWhere(ctx);
+  const visibleCustomerTask = {
+    OR: [{ customerId: null }, { customer: { is: customerWhere } }],
+  };
 
   const [myTasks, teamTasks, members] = await Promise.all([
     db.task.findMany({
-      where: { organizationId: ctx.organizationId, assignedToId: ctx.membershipId, status: "OPEN" },
+      where: {
+        organizationId: ctx.organizationId,
+        assignedToId: ctx.membershipId,
+        status: "OPEN",
+        ...visibleCustomerTask,
+      },
       include: { customer: true },
       orderBy: [{ dueAt: "asc" }],
     }),
     canViewTeam
       ? db.task.findMany({
-          where: { organizationId: ctx.organizationId, status: "OPEN" },
+          where: {
+            organizationId: ctx.organizationId,
+            status: "OPEN",
+            ...visibleCustomerTask,
+          },
           include: { customer: true, assignedTo: { include: { user: true } } },
           orderBy: [{ dueAt: "asc" }],
           take: 100,

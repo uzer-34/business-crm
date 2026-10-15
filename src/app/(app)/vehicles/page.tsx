@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getDefaultMembershipOrRedirect } from "@/lib/organization/actions";
 import { loadTenantContext } from "@/lib/rbac/guard";
+import { getAccessibleCustomerWhere, listAccessibleCustomerOptions } from "@/lib/customer/access";
 import { Card, CardContent } from "@/components/ui/card";
 import { RevealOnScroll } from "@/components/motion/reveal-on-scroll";
 import { HoverLift } from "@/components/motion/hover-lift";
@@ -24,17 +25,19 @@ export default async function VehiclesPage() {
     );
   }
 
+  const customerWhere = await getAccessibleCustomerWhere(ctx, { archivedAt: null });
   const [vehicles, customers] = await Promise.all([
     db.vehicle.findMany({
-      where: { organizationId: membership.organizationId, archivedAt: null },
+      where: {
+        organizationId: ctx.organizationId,
+        archivedAt: null,
+        customer: { is: customerWhere },
+      },
       include: { customer: true },
       orderBy: { createdAt: "desc" },
       take: 100,
     }),
-    db.customer.findMany({
-      where: { organizationId: membership.organizationId, archivedAt: null },
-      orderBy: { name: "asc" },
-    }),
+    listAccessibleCustomerOptions(ctx),
   ]);
 
   const canCreate = ctx.permissions.has("vehicles.create");

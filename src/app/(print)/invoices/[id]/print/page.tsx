@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext } from "@/lib/rbac/guard";
+import { getAccessibleCustomerNames } from "@/lib/customer/access";
 import { formatMoney } from "@/lib/format";
 import { PrintButton } from "./print-button";
 
@@ -14,12 +15,17 @@ export default async function InvoicePrintPage({ params }: PageProps<"/invoices/
 
   const invoice = await db.invoice.findUnique({
     where: { id },
-    include: { customer: true, branch: true, organization: true, items: true },
+    include: { branch: true, organization: true, items: true },
   });
   if (!invoice) notFound();
 
   const ctx = await loadTenantContext(user.id, invoice.organizationId);
   if (!ctx) notFound();
+
+  const customerNameById = await getAccessibleCustomerNames(
+    ctx,
+    invoice.customerId ? [invoice.customerId] : [],
+  );
 
   const { organization } = invoice;
   const money = (value: string) => formatMoney(value, organization.currencyCode, organization.locale);
@@ -44,7 +50,11 @@ export default async function InvoicePrintPage({ params }: PageProps<"/invoices/
 
       <div className="mt-6">
         <p className="text-xs uppercase text-muted-foreground">Billed to</p>
-        <p className="text-sm">{invoice.customer ? invoice.customer.name : "Walk-in customer"}</p>
+        <p className="text-sm">
+          {invoice.customerId
+            ? customerNameById.get(invoice.customerId) ?? "Customer unavailable"
+            : "Walk-in customer"}
+        </p>
       </div>
 
       <table className="mt-8 w-full text-sm">

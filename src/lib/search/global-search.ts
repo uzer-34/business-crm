@@ -3,6 +3,7 @@
 import { getCurrentUser } from "@/lib/auth/session";
 import { getActiveOrganizationId } from "@/lib/organization/active-org";
 import { loadTenantContext } from "@/lib/rbac/guard";
+import { getAccessibleCustomerNames, getAccessibleCustomerWhere } from "@/lib/customer/access";
 import { db } from "@/lib/db";
 
 /*
@@ -43,14 +44,18 @@ export async function globalSearch(rawQuery: string): Promise<SearchResult[]> {
 
   const contains = { contains: query, mode: "insensitive" as const };
   const can = (permission: string) => ctx.permissions.has(permission as never);
+  const accessibleCustomerWhere = await getAccessibleCustomerWhere(ctx);
+  const accessibleCustomerNameWhere = { AND: [accessibleCustomerWhere, { name: contains }] };
 
   const [customers, products, orders, invoices, vehicles, suppliers, tasks] = await Promise.all([
     can("customers.view")
       ? db.customer.findMany({
           where: {
-            organizationId,
-            archivedAt: null,
-            OR: [{ name: contains }, { email: contains }, { phone: contains }, { companyName: contains }],
+            AND: [
+              accessibleCustomerWhere,
+              { archivedAt: null },
+              { OR: [{ name: contains }, { email: contains }, { phone: contains }, { companyName: contains }] },
+            ],
           },
           select: { id: true, name: true, email: true, phone: true },
           take: PER_TYPE_LIMIT,
@@ -65,24 +70,38 @@ export async function globalSearch(rawQuery: string): Promise<SearchResult[]> {
       : [],
     can("sales.view")
       ? db.order.findMany({
-          where: { organizationId, OR: [{ orderNumber: contains }, { customer: { name: contains } }] },
-          select: { id: true, orderNumber: true, customer: { select: { name: true } } },
+          where: {
+            organizationId,
+            OR: [
+              { orderNumber: contains },
+              { customer: { is: accessibleCustomerNameWhere } },
+            ],
+          },
+          select: { id: true, orderNumber: true, customerId: true },
           take: PER_TYPE_LIMIT,
         })
       : [],
     can("invoices.view")
       ? db.invoice.findMany({
-          where: { organizationId, OR: [{ invoiceNumber: contains }, { customer: { name: contains } }] },
-          select: { id: true, invoiceNumber: true, customer: { select: { name: true } } },
+          where: {
+            organizationId,
+            OR: [
+              { invoiceNumber: contains },
+              { customer: { is: accessibleCustomerNameWhere } },
+            ],
+          },
+          select: { id: true, invoiceNumber: true, customerId: true },
           take: PER_TYPE_LIMIT,
         })
       : [],
     can("vehicles.view")
       ? db.vehicle.findMany({
           where: {
-            organizationId,
-            archivedAt: null,
-            OR: [{ plateNumber: contains }, { make: contains }, { model: contains }, { vin: contains }],
+            AND: [
+              { organizationId, archivedAt: null },
+              { OR: [{ plateNumber: contains }, { make: contains }, { model: contains }, { vin: contains }] },
+              { customer: { is: accessibleCustomerWhere } },
+            ],
           },
           select: { id: true, make: true, model: true, plateNumber: true },
           take: PER_TYPE_LIMIT,
@@ -97,12 +116,25 @@ export async function globalSearch(rawQuery: string): Promise<SearchResult[]> {
       : [],
     can("tasks.view")
       ? db.task.findMany({
-          where: { organizationId, title: contains },
+          where: {
+            organizationId,
+            title: contains,
+            ...(can("customers.view")
+              ? { OR: [{ customerId: null }, { customer: { is: accessibleCustomerWhere } }] }
+              : { customerId: null }),
+          },
           select: { id: true, title: true, status: true, customerId: true },
           take: PER_TYPE_LIMIT,
         })
       : [],
   ]);
+
+  const relatedCustomerIds = [...new Set([
+    ...orders.map((row) => row.customerId),
+    ...invoices.map((row) => row.customerId),
+    ...tasks.map((row) => row.customerId),
+  ].filter((id): id is string => Boolean(id)))];
+  const customerNameById = await getAccessibleCustomerNames(ctx, relatedCustomerIds);
 
   return [
     ...customers.map((row) => ({
@@ -116,14 +148,14 @@ export async function globalSearch(rawQuery: string): Promise<SearchResult[]> {
       type: "order" as const,
       id: row.id,
       title: row.orderNumber,
-      subtitle: row.customer?.name ?? null,
+      subtitle: row.customerId ? customerNameById.get(row.customerId) ?? null : null,
       href: `/orders/${row.id}`,
     })),
     ...invoices.map((row) => ({
       type: "invoice" as const,
       id: row.id,
       title: row.invoiceNumber,
-      subtitle: row.customer?.name ?? null,
+      subtitle: row.customerId ? customerNameById.get(row.customerId) ?? null : null,
       href: `/invoices/${row.id}`,
     })),
     ...products.map((row) => ({

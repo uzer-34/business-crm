@@ -3,6 +3,7 @@
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext, requirePermission, ForbiddenError } from "@/lib/rbac/guard";
+import { loadAccessibleCustomerInOrganization, loadAccessibleCustomerContext } from "@/lib/customer/access";
 import { createVehicleSchema, editVehicleSchema } from "@/lib/validation/vehicles";
 import { recordAudit } from "@/lib/audit/record";
 import { prepareFieldValues } from "@/lib/metadata/save-values";
@@ -38,11 +39,9 @@ export async function createVehicleAction(
   const user = await getCurrentUser();
   if (!user) return { ok: false, error: "Not signed in" };
 
-  const customer = await db.customer.findUnique({ where: { id: customerId } });
-  if (!customer) return { ok: false, error: "Customer not found" };
-
-  const ctx = await loadTenantContext(user.id, customer.organizationId);
-  if (!ctx) return { ok: false, error: "Customer not found" };
+  const loaded = await loadAccessibleCustomerContext(user.id, customerId);
+  if (!loaded) return { ok: false, error: "Customer not found" };
+  const { ctx } = loaded;
 
   try {
     requirePermission(ctx, "vehicles.create");
@@ -98,6 +97,10 @@ export async function editVehicleAction(vehicleId: string, input: unknown): Prom
     throw error;
   }
 
+  if (!(await loadAccessibleCustomerInOrganization(user.id, vehicle.customerId, ctx.organizationId))) {
+    return { ok: false, error: "Vehicle not found" };
+  }
+
   const parsed = editVehicleSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
@@ -132,6 +135,10 @@ export async function archiveVehicleAction(vehicleId: string): Promise<ActionRes
   } catch (error) {
     if (error instanceof ForbiddenError) return { ok: false, error: error.message };
     throw error;
+  }
+
+  if (!(await loadAccessibleCustomerInOrganization(user.id, vehicle.customerId, ctx.organizationId))) {
+    return { ok: false, error: "Vehicle not found" };
   }
 
   await db.$transaction(async (tx) => {
@@ -253,6 +260,10 @@ export async function saveVehicleAttributesAction(
   } catch (error) {
     if (error instanceof ForbiddenError) return { ok: false, error: error.message };
     throw error;
+  }
+
+  if (!(await loadAccessibleCustomerInOrganization(user.id, vehicle.customerId, ctx.organizationId))) {
+    return { ok: false, error: "Vehicle not found" };
   }
 
   const prepared = await prepareFieldValues(ctx.organizationId, "vehicle", fieldValues);

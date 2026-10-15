@@ -3,6 +3,7 @@
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext, requirePermission, ForbiddenError } from "@/lib/rbac/guard";
+import { loadAccessibleCustomerContext } from "./access";
 import { createCustomerSchema, editCustomerSchema } from "@/lib/validation/customer";
 import { logActivity } from "./activity";
 import { recordAudit } from "@/lib/audit/record";
@@ -73,21 +74,7 @@ export async function createCustomerAction(
   return { ok: true, data: { customerId: customer.id } };
 }
 
-/**
- * Loads a customer scoped to the caller's membership. Never trusts a
- * client-supplied organizationId: the customer's own organizationId (read
- * from the database) is what gets checked against the caller's membership.
- */
-async function loadCustomerContext(userId: string, customerId: string) {
-  const customer = await db.customer.findUnique({ where: { id: customerId } });
-  if (!customer) return null;
-
-  const ctx = await loadTenantContext(userId, customer.organizationId);
-  if (!ctx) return null;
-
-  return { customer, ctx };
-}
-
+/** Customer writes require both the action capability and branch-scoped access. */
 export async function assignCustomerAction(
   customerId: string,
   assignedToId: string | null,
@@ -95,7 +82,7 @@ export async function assignCustomerAction(
   const user = await getCurrentUser();
   if (!user) return { ok: false, error: "Not signed in" };
 
-  const loaded = await loadCustomerContext(user.id, customerId);
+  const loaded = await loadAccessibleCustomerContext(user.id, customerId);
   if (!loaded) return { ok: false, error: "Customer not found" };
   const { ctx } = loaded;
 
@@ -156,7 +143,7 @@ export async function editCustomerAction(
   const user = await getCurrentUser();
   if (!user) return { ok: false, error: "Not signed in" };
 
-  const loaded = await loadCustomerContext(user.id, customerId);
+  const loaded = await loadAccessibleCustomerContext(user.id, customerId);
   if (!loaded) return { ok: false, error: "Customer not found" };
   const { ctx } = loaded;
 
@@ -204,7 +191,7 @@ export async function archiveCustomerAction(customerId: string): Promise<ActionR
   const user = await getCurrentUser();
   if (!user) return { ok: false, error: "Not signed in" };
 
-  const loaded = await loadCustomerContext(user.id, customerId);
+  const loaded = await loadAccessibleCustomerContext(user.id, customerId);
   if (!loaded) return { ok: false, error: "Customer not found" };
   const { ctx } = loaded;
 

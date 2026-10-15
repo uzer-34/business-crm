@@ -32,6 +32,14 @@ export async function recordMovementAction(organizationId: string, input: unknow
   const product = await db.product.findFirst({ where: { id: productId, organizationId: ctx.organizationId } });
   if (!product) return { ok: false, error: "Product not found" };
 
+  if (variantId) {
+    const variant = await db.productVariant.findFirst({
+      where: { id: variantId, productId },
+      select: { id: true },
+    });
+    if (!variant) return { ok: false, error: "Product variant not found" };
+  }
+
   try {
     await db.$transaction(async (tx) => {
       if (quantityDelta < 0) {
@@ -99,6 +107,14 @@ export async function transferStockAction(organizationId: string, input: unknown
 
   const product = await db.product.findFirst({ where: { id: productId, organizationId: ctx.organizationId } });
   if (!product) return { ok: false, error: "Product not found" };
+
+  if (variantId) {
+    const variant = await db.productVariant.findFirst({
+      where: { id: variantId, productId },
+      select: { id: true },
+    });
+    if (!variant) return { ok: false, error: "Product variant not found" };
+  }
 
   const transferGroupId = randomUUID();
 

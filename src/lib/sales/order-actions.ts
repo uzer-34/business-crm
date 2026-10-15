@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext, requirePermission, assertBranchAccess, ForbiddenError } from "@/lib/rbac/guard";
+import { loadAccessibleCustomerContext } from "@/lib/customer/access";
 import { createOrderSchema, fulfillOrderItemSchema, processReturnSchema, recordOrderPaymentSchema } from "@/lib/validation/sales";
 import { applyStockMovement, getStockQuantity } from "@/lib/inventory/stock";
 import { logActivity } from "@/lib/customer/activity";
@@ -34,8 +35,10 @@ export async function createOrderAction(
   }
 
   if (customerId) {
-    const customer = await db.customer.findFirst({ where: { id: customerId, organizationId: ctx.organizationId } });
-    if (!customer) return { ok: false, error: "Customer not found" };
+    const loadedCustomer = await loadAccessibleCustomerContext(user.id, customerId);
+    if (!loadedCustomer || loadedCustomer.ctx.organizationId !== ctx.organizationId) {
+      return { ok: false, error: "Customer not found" };
+    }
   }
 
   if (assignedToId) {
@@ -46,8 +49,15 @@ export async function createOrderAction(
   }
 
   if (vehicleId) {
-    const vehicle = await db.vehicle.findFirst({ where: { id: vehicleId, organizationId: ctx.organizationId } });
+    const vehicle = await db.vehicle.findFirst({
+      where: { id: vehicleId, organizationId: ctx.organizationId },
+      select: { id: true, customerId: true },
+    });
     if (!vehicle) return { ok: false, error: "Vehicle not found" };
+    const vehicleCustomer = await loadAccessibleCustomerContext(user.id, vehicle.customerId);
+    if (!vehicleCustomer || vehicleCustomer.ctx.organizationId !== ctx.organizationId) {
+      return { ok: false, error: "Vehicle not found" };
+    }
     if (customerId && vehicle.customerId !== customerId) {
       return { ok: false, error: "Vehicle does not belong to this customer" };
     }

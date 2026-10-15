@@ -1,6 +1,8 @@
 import "server-only";
 import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
+import { getAccessibleCustomerWhere } from "@/lib/customer/access";
+import type { TenantContext } from "@/lib/rbac/guard";
 
 export type MonthlyRevenuePoint = { monthLabel: string; total: string };
 export type TopCustomer = { customerId: string; name: string; total: string };
@@ -50,18 +52,28 @@ export async function getMonthlyRevenueTrend(organizationId: string, months = 6)
   }));
 }
 
-export async function getTopCustomersByRevenue(organizationId: string, take = 5, days = 180): Promise<TopCustomer[]> {
+export async function getTopCustomersByRevenue(ctx: TenantContext, take = 5, days = 180): Promise<TopCustomer[]> {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const customerWhere = await getAccessibleCustomerWhere(ctx);
   const grouped = await db.invoice.groupBy({
     by: ["customerId"],
-    where: { organizationId, status: "ISSUED", customerId: { not: null }, issuedAt: { gte: since } },
+    where: {
+      organizationId: ctx.organizationId,
+      status: "ISSUED",
+      customerId: { not: null },
+      issuedAt: { gte: since },
+      customer: { is: customerWhere },
+    },
     _sum: { total: true },
     orderBy: { _sum: { total: "desc" } },
     take,
   });
 
   const customerIds = grouped.map((g) => g.customerId).filter((id): id is string => Boolean(id));
-  const customers = await db.customer.findMany({ where: { id: { in: customerIds } } });
+  const customers = await db.customer.findMany({
+    where: { AND: [customerWhere, { id: { in: customerIds } }] },
+    select: { id: true, name: true },
+  });
   const nameById = new Map(customers.map((c) => [c.id, c.name]));
 
   return grouped

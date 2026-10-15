@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext } from "@/lib/rbac/guard";
+import { getAccessibleCustomerNames, getAccessibleCustomerWhere } from "@/lib/customer/access";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatMoney } from "@/lib/format";
 import { FulfillItemForm } from "./fulfill-item-form";
@@ -35,10 +36,8 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
   const order = await db.order.findUnique({
     where: { id },
     include: {
-      customer: true,
       branch: true,
       organization: true,
-      vehicle: true,
       items: { include: { product: true, variant: true, service: true } },
       invoices: { orderBy: { createdAt: "desc" }, take: 1 },
       payments: { orderBy: { createdAt: "desc" }, include: { recordedBy: true } },
@@ -48,6 +47,17 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
 
   const ctx = await loadTenantContext(user.id, order.organizationId);
   if (!ctx) notFound();
+
+  const customerWhere = await getAccessibleCustomerWhere(ctx);
+  const [customerNameById, vehicle] = await Promise.all([
+    getAccessibleCustomerNames(ctx, order.customerId ? [order.customerId] : []),
+    order.vehicleId
+      ? db.vehicle.findFirst({
+          where: { id: order.vehicleId, organizationId: ctx.organizationId, customer: { is: customerWhere } },
+          select: { id: true, make: true, model: true, plateNumber: true, customerId: true },
+        })
+      : Promise.resolve(null),
+  ]);
 
   const { organization } = order;
   const canFulfill = ctx.permissions.has("sales.fulfill") && order.status !== "CANCELLED";
@@ -62,13 +72,15 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
           <div>
             <h1 className="text-xl font-semibold">{order.orderNumber}</h1>
             <p className="text-sm text-muted-foreground">
-              {order.customer ? order.customer.name : "Walk-in"} · {order.branch.name}
+              {order.customerId
+                ? customerNameById.get(order.customerId) ?? "Customer unavailable"
+                : "Walk-in"} · {order.branch.name}
             </p>
-            {order.vehicle && (
+            {vehicle && (
               <p className="text-sm text-muted-foreground">
-                <Link href={`/vehicles/${order.vehicle.id}`} className="hover:underline">
-                  {order.vehicle.make} {order.vehicle.model}
-                  {order.vehicle.plateNumber && ` · ${order.vehicle.plateNumber}`}
+                <Link href={`/vehicles/${vehicle.id}`} className="hover:underline">
+                  {vehicle.make} {vehicle.model}
+                  {vehicle.plateNumber && ` · ${vehicle.plateNumber}`}
                 </Link>
                 {order.odometerReading != null && ` · ${order.odometerReading} mi/km`}
               </p>

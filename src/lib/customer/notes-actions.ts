@@ -2,7 +2,8 @@
 
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/session";
-import { loadTenantContext, requirePermission, ForbiddenError } from "@/lib/rbac/guard";
+import { requirePermission, ForbiddenError } from "@/lib/rbac/guard";
+import { loadAccessibleCustomerContext } from "./access";
 import { createNoteSchema } from "@/lib/validation/customer";
 import { logActivity } from "./activity";
 import { recordAudit } from "@/lib/audit/record";
@@ -12,11 +13,9 @@ export async function addNoteAction(customerId: string, input: unknown): Promise
   const user = await getCurrentUser();
   if (!user) return { ok: false, error: "Not signed in" };
 
-  const customer = await db.customer.findUnique({ where: { id: customerId } });
-  if (!customer) return { ok: false, error: "Customer not found" };
-
-  const ctx = await loadTenantContext(user.id, customer.organizationId);
-  if (!ctx) return { ok: false, error: "Customer not found" };
+  const loaded = await loadAccessibleCustomerContext(user.id, customerId);
+  if (!loaded) return { ok: false, error: "Customer not found" };
+  const { ctx } = loaded;
 
   try {
     // Notes are child records of a customer — gated on the same permission

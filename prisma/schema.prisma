@@ -27,6 +27,8 @@ model User {
   memberships           Membership[]
   sessions              Session[]
   auditLogs             AuditLog[]
+  platformPrincipal     PlatformPrincipal?
+  platformBootstrapAuthorizations PlatformBootstrapAuthorization[]
   createdCustomers      Customer[]
   notes                 Note[]
   createdTasks          Task[]
@@ -45,6 +47,216 @@ model User {
   createdVehicles       Vehicle[]
 
   @@map("users")
+}
+
+// Platform access is a separate principal and capability grant boundary.
+// Tenant Membership/Role records never grant platform capabilities. A
+// platform principal is provisioned out of band; the application intentionally
+// has no self-service bootstrap or grant-management path.
+enum PlatformPrincipalStatus {
+  ACTIVE
+  DISABLED
+}
+
+model PlatformPrincipal {
+  id        String                  @id @default(cuid())
+  userId    String                  @unique
+  user      User                    @relation(fields: [userId], references: [id], onDelete: Restrict)
+  status    PlatformPrincipalStatus @default(DISABLED)
+  createdAt DateTime                @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime                @updatedAt @db.Timestamptz(3)
+
+  grants        PlatformGrant[]      @relation("PlatformGrantSubject")
+  issuedGrants  PlatformGrant[]      @relation("PlatformGrantIssuer")
+  revokedGrants PlatformGrant[]      @relation("PlatformGrantRevoker")
+  auditLogs     PlatformAuditLog[]
+  recordedPlatformPayments PlatformPayment[]
+
+  @@map("platform_principals")
+}
+
+model PlatformGrant {
+  id                   String            @id @default(cuid())
+  principalId          String
+  principal            PlatformPrincipal @relation("PlatformGrantSubject", fields: [principalId], references: [id], onDelete: Restrict)
+  capability           String
+  grantedByPrincipalId String?
+  grantedBy            PlatformPrincipal? @relation("PlatformGrantIssuer", fields: [grantedByPrincipalId], references: [id], onDelete: Restrict)
+  revokedAt            DateTime?         @db.Timestamptz(3)
+  revokedByPrincipalId String?
+  revokedBy            PlatformPrincipal? @relation("PlatformGrantRevoker", fields: [revokedByPrincipalId], references: [id], onDelete: Restrict)
+  createdAt            DateTime          @default(now()) @db.Timestamptz(3)
+
+  @@unique([principalId, capability])
+  @@index([capability, revokedAt])
+  @@map("platform_grants")
+}
+
+// Kept separate from tenant AuditLog. targetId is intentionally an opaque ID,
+// not an Organization FK, so an organization lifecycle event remains auditable
+// if a tenant is ever removed. The app exposes append operations only; DB
+// role-level immutability and retention are separate Gate 0 decisions.
+model PlatformAuditLog {
+  id                String            @id @default(cuid())
+  // Exactly one actor is present. `actorExternalReference` is reserved for
+  // one-time, operator-authorized bootstrap activity before a principal exists.
+  actorPrincipalId  String?
+  actorPrincipal    PlatformPrincipal? @relation(fields: [actorPrincipalId], references: [id], onDelete: Restrict)
+  actorExternalReference String?
+  action            String
+  targetType        String
+  targetId          String?
+  metadata          Json?
+  createdAt         DateTime          @default(now()) @db.Timestamptz(3)
+
+  @@index([actorPrincipalId, createdAt])
+  @@index([targetType, targetId, createdAt])
+  @@map("platform_audit_logs")
+}
+
+// A DB operator creates these one-time authorizations out of band. The app
+// stores only a SHA-256 hash of a high-entropy token; no public route can issue
+// or broaden one. The provisioner currently accepts only the directory-view
+// capability and refuses non-local database targets.
+model PlatformBootstrapAuthorization {
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  tokenHash         String   @unique
+  capability        String
+  operatorReference String
+  expiresAt         DateTime @db.Timestamptz(3)
+  consumedAt        DateTime? @db.Timestamptz(3)
+  revokedAt         DateTime? @db.Timestamptz(3)
+  revokedByReference String?
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([expiresAt, consumedAt])
+  @@map("platform_bootstrap_authorizations")
+}
+
+enum PlatformPurchaseKind {
+  LIFETIME
+  SUBSCRIPTION
+  INSTALLMENT
+}
+
+enum PlatformBillingIntervalUnit {
+  DAY
+  WEEK
+  MONTH
+  YEAR
+}
+
+enum PlatformEntitlementState {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  REVOKED
+}
+
+enum PlatformScheduleKind {
+  LIFETIME_PAYMENT
+  SUBSCRIPTION_CYCLE
+  INSTALLMENT
+}
+
+enum PlatformScheduleStatus {
+  OPEN
+  CANCELED
+}
+
+enum PlatformPaymentDirection {
+  RECEIPT
+  REFUND
+}
+
+enum PlatformPaymentStatus {
+  PENDING
+  SETTLED
+  FAILED
+  VOIDED
+}
+
+// Control-plane commercial records are separate from tenant invoices and
+// customer/supplier payment ledgers. No provider, tax, interest, fee, renewal,
+// or access policy is implied by these records.
+model PlatformPurchase {
+  id             String              @id @default(cuid())
+  organizationId String
+  organization   Organization        @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  kind           PlatformPurchaseKind
+  // For subscription purchases this is the stated per-cycle amount; for
+  // lifetime/installment purchases it is the stated total contract amount.
+  contractAmount Decimal             @db.Decimal(12, 2)
+  currencyCode   String              @db.VarChar(3)
+  billingIntervalUnit  PlatformBillingIntervalUnit?
+  billingIntervalCount Int?
+  createdAt      DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime            @updatedAt @db.Timestamptz(3)
+
+  entitlement PlatformEntitlement?
+  schedule    PlatformBillingScheduleItem[]
+  payments    PlatformPayment[]
+
+  @@index([organizationId, createdAt])
+  @@map("platform_purchases")
+}
+
+model PlatformEntitlement {
+  id         String                   @id @default(cuid())
+  purchaseId String                   @unique
+  purchase   PlatformPurchase         @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
+  state      PlatformEntitlementState @default(PENDING)
+  createdAt  DateTime                 @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime                 @updatedAt @db.Timestamptz(3)
+
+  @@map("platform_entitlements")
+}
+
+// Rows are explicit dates and amounts supplied by an authorized workflow.
+// The app does not auto-generate renewals, add fees, or change entitlement
+// state when a date passes.
+model PlatformBillingScheduleItem {
+  id           String                 @id @default(cuid())
+  purchaseId   String
+  purchase     PlatformPurchase       @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
+  kind         PlatformScheduleKind
+  sequence     Int
+  dueAt        DateTime               @db.Timestamptz(3)
+  amount       Decimal                @db.Decimal(12, 2)
+  currencyCode String                 @db.VarChar(3)
+  status       PlatformScheduleStatus @default(OPEN)
+  createdAt    DateTime               @default(now()) @db.Timestamptz(3)
+
+  payments PlatformPayment[]
+
+  @@unique([purchaseId, sequence])
+  @@unique([purchaseId, id])
+  @@index([dueAt, status])
+  @@map("platform_billing_schedule_items")
+}
+
+// Provider-neutral payment history. `SETTLED` is a recorded accounting state;
+// this schema contains no payment verification or settlement integration.
+model PlatformPayment {
+  id                String                    @id @default(cuid())
+  purchaseId        String
+  purchase          PlatformPurchase          @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
+  scheduleItemId    String
+  scheduleItem      PlatformBillingScheduleItem @relation(fields: [purchaseId, scheduleItemId], references: [purchaseId, id], onDelete: Restrict)
+  recordedById      String
+  recordedBy        PlatformPrincipal         @relation(fields: [recordedById], references: [id], onDelete: Restrict)
+  direction         PlatformPaymentDirection
+  status            PlatformPaymentStatus     @default(PENDING)
+  amount            Decimal                   @db.Decimal(12, 2)
+  currencyCode      String                    @db.VarChar(3)
+  externalReference String?
+  createdAt         DateTime                  @default(now()) @db.Timestamptz(3)
+
+  @@index([purchaseId, createdAt])
+  @@index([scheduleItemId, createdAt])
+  @@map("platform_payments")
 }
 
 enum OtpChannel {
@@ -144,6 +356,7 @@ model Organization {
   fieldDefinitions       FieldDefinition[]
   categoryRecommendations CategoryFieldRecommendation[]
   vehicles           Vehicle[]
+  platformPurchases  PlatformPurchase[]
 
   @@map("organizations")
 }
@@ -202,15 +415,22 @@ model Membership {
   allBranches    Boolean          @default(false)
   invitedAt      DateTime         @default(now()) @db.Timestamptz(3)
   joinedAt       DateTime?        @db.Timestamptz(3)
+  invitationTokenHash     String?   @unique
+  invitationExpiresAt     DateTime? @db.Timestamptz(3)
+  invitedByMembershipId   String?
 
   branches          MembershipBranch[]
   assignedCustomers Customer[]
   assignedTasks     Task[]
   assignedOrders    Order[]
   notifications     Notification[]
+  invitedByMembership     Membership?  @relation("MembershipInvitations", fields: [invitedByMembershipId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  sentInvitations         Membership[] @relation("MembershipInvitations")
 
   @@unique([userId, organizationId])
+  @@unique([id, organizationId])
   @@index([organizationId])
+  @@index([status, invitationExpiresAt])
   @@map("memberships")
 }
 

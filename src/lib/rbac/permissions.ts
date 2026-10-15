@@ -82,6 +82,13 @@ export const PERMISSION_CATALOG = [
 
 export type PermissionKey = (typeof PERMISSION_CATALOG)[number]["key"];
 
+const permissionKeys: ReadonlySet<string> = new Set(PERMISSION_CATALOG.map(({ key }) => key));
+
+/** Tenant grants are limited to keys in the tenant permission catalog. */
+export function isPermissionKey(value: string): value is PermissionKey {
+  return permissionKeys.has(value);
+}
+
 export const SYSTEM_ROLES = [
   {
     key: "owner",
