@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   Banknote,
   BarChart3,
+  BookOpen,
   Boxes,
   Building2,
   Car,
@@ -53,6 +54,7 @@ export type ModuleKey =
   | "purchase-orders"
   | "vehicles"
   | "reports"
+  | "cashbook"
   | "employees"
   | "roles"
   | "branches"
@@ -159,6 +161,14 @@ export const MODULES: readonly ModuleDefinition[] = [
     icon: BarChart3,
     group: "analytics",
     permissions: ["reports.sales", "reports.financial"],
+  },
+  {
+    key: "cashbook",
+    label: "Cashbook",
+    href: "/cashbook",
+    icon: BookOpen,
+    group: "analytics",
+    permissions: ["reports.financial", "invoices.view", "payments.record", "sales.fulfill", "purchases.view", "expenses.view"],
   },
 
   { key: "employees", label: "Employees", href: "/employees", icon: UserCog, group: "management", permissions: ["employees.view"] },

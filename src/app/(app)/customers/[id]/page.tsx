@@ -1,9 +1,11 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import { Prisma } from "@/generated/prisma/client";
 import { Mail, Phone, Plus, StickyNote } from "lucide-react";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/session";
-import { loadTenantContext } from "@/lib/rbac/guard";
+import { getAccessibleBranchIds } from "@/lib/rbac/guard";
+import { loadAccessibleCustomerContext } from "@/lib/customer/access";
 import { tracksVehicles } from "@/lib/industry/registry";
 import { getTerminology } from "@/lib/industry/terminology";
 import { getTimeline } from "@/lib/activity/timeline";
@@ -25,42 +27,77 @@ const STATUS_TONE: Record<string, "warning" | "success" | "neutral"> = {
 };
 const TYPE_LABEL: Record<string, string> = { INDIVIDUAL: "Individual", BUSINESS: "Business" };
 
-export default async function CustomerPage({ params, searchParams }: PageProps<"/customers/[id]">) {
+type AccountEvent = {
+  id: string;
+  createdAt: Date;
+  kind: "sale" | "payment" | "refund";
+  label: string;
+  detail: string;
+  amount: Prisma.Decimal;
+  href: string;
+};
+type AccountStatement = {
+  transactions: Array<Omit<AccountEvent, "createdAt" | "amount"> & { createdAt: string; amount: string; balance: string }>;
+  billed: string;
+  collected: string;
+  refunded: string;
+  balance: string;
+};
+
+export default async function CustomerPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ tab?: string | string[] }>;
+}) {
   const { id } = await params;
   const query = await searchParams;
 
   const user = await getCurrentUser();
   if (!user) notFound();
 
-  const customer = await db.customer.findUnique({
-    where: { id },
-    include: { organization: true, branch: { select: { name: true } } },
-  });
-  if (!customer) notFound();
-
-  const ctx = await loadTenantContext(user.id, customer.organizationId);
+  const loaded = await loadAccessibleCustomerContext(user.id, id);
+  if (!loaded) notFound();
+  const { customer, ctx } = loaded;
   if (!ctx || !ctx.permissions.has("customers.view")) notFound();
 
   const term = getTerminology(customer.organization.industryKey);
   const showVehicles = tracksVehicles(customer.organization.industryKey);
-  const activeTab = resolveTab(typeof query.tab === "string" ? query.tab : undefined, showVehicles);
+  const canViewAccount = ctx.permissions.has("invoices.view")
+    || ctx.permissions.has("payments.record")
+    || ctx.permissions.has("sales.fulfill")
+    || ctx.permissions.has("reports.financial");
+  const branchIds = await getAccessibleBranchIds(ctx);
+  const activeTab = resolveTab(typeof query.tab === "string" ? query.tab : undefined, showVehicles, canViewAccount);
 
   const [notesRaw, tasksRaw, timeline, membersRaw, ordersRaw, invoicesRaw, fieldSections, fieldValues, vehiclesRaw] =
     await Promise.all([
-      db.note.findMany({ where: { customerId: id }, include: { author: true }, orderBy: { createdAt: "desc" } }),
+      db.note.findMany({ where: { organizationId: ctx.organizationId, customerId: id }, include: { author: true }, orderBy: { createdAt: "desc" } }),
       db.task.findMany({
-        where: { customerId: id },
+        where: { organizationId: ctx.organizationId, customerId: id },
         include: { assignedTo: { include: { user: true } } },
         orderBy: [{ status: "asc" }, { dueAt: "asc" }],
       }),
       getTimeline(ctx.organizationId, "Customer", id),
       db.membership.findMany({ where: { organizationId: ctx.organizationId, status: "ACTIVE" }, include: { user: true } }),
-      db.order.findMany({ where: { customerId: id }, orderBy: { createdAt: "desc" } }),
-      db.invoice.findMany({ where: { customerId: id }, orderBy: { createdAt: "desc" } }),
+      db.order.findMany({
+        where: { customerId: id, branchId: { in: branchIds } },
+        include: {
+          invoices: { select: { id: true } },
+          payments: { orderBy: { createdAt: "asc" } },
+        },
+        orderBy: { createdAt: "desc" },
+      }),
+      db.invoice.findMany({
+        where: { customerId: id, branchId: { in: branchIds } },
+        include: { payments: { orderBy: { createdAt: "asc" } } },
+        orderBy: { createdAt: "desc" },
+      }),
       loadFieldLayout(ctx.organizationId, "customer", { roleKey: ctx.roleKey }),
       loadFieldValues(ctx.organizationId, "customer", id),
       showVehicles
-        ? db.vehicle.findMany({ where: { customerId: id, archivedAt: null }, orderBy: { createdAt: "desc" } })
+        ? db.vehicle.findMany({ where: { organizationId: ctx.organizationId, customerId: id, archivedAt: null }, orderBy: { createdAt: "desc" } })
         : Promise.resolve([]),
     ]);
 
@@ -98,6 +135,79 @@ export default async function CustomerPage({ params, searchParams }: PageProps<"
     paymentStatus: inv.paymentStatus,
     total: inv.total.toString(),
   }));
+
+  let accountStatement: AccountStatement | null = null;
+  if (canViewAccount) {
+    const events: AccountEvent[] = [];
+    for (const invoice of invoicesRaw) {
+      if (invoice.status !== "ISSUED") continue;
+      events.push({
+        id: `invoice-${invoice.id}`,
+        createdAt: invoice.issuedAt,
+        kind: "sale",
+        label: "Invoice issued",
+        detail: invoice.invoiceNumber,
+        amount: new Prisma.Decimal(invoice.total),
+        href: `/invoices/${invoice.id}`,
+      });
+      for (const payment of invoice.payments) {
+        const isRefund = payment.amount.isNegative();
+        events.push({
+          id: `invoice-payment-${payment.id}`,
+          createdAt: payment.createdAt,
+          kind: isRefund ? "refund" : "payment",
+          label: isRefund ? "Refund" : "Payment received",
+          detail: `${invoice.invoiceNumber} · ${payment.method.replaceAll("_", " ").toLowerCase()}${payment.reference ? ` · ${payment.reference}` : ""}`,
+          amount: new Prisma.Decimal(payment.amount).negated(),
+          href: `/invoices/${invoice.id}`,
+        });
+      }
+    }
+    for (const order of ordersRaw) {
+      if (order.status === "CANCELLED" || order.invoices.length > 0) continue;
+      events.push({
+        id: `order-${order.id}`,
+        createdAt: order.createdAt,
+        kind: "sale",
+        label: "Order placed",
+        detail: order.orderNumber,
+        amount: new Prisma.Decimal(order.total),
+        href: `/orders/${order.id}`,
+      });
+      for (const payment of order.payments) {
+        const isRefund = payment.amount.isNegative();
+        events.push({
+          id: `order-payment-${payment.id}`,
+          createdAt: payment.createdAt,
+          kind: isRefund ? "refund" : "payment",
+          label: isRefund ? "Refund" : "Payment received",
+          detail: `${order.orderNumber} · ${payment.method.replaceAll("_", " ").toLowerCase()}${payment.reference ? ` · ${payment.reference}` : ""}`,
+          amount: new Prisma.Decimal(payment.amount).negated(),
+          href: `/orders/${order.id}`,
+        });
+      }
+    }
+
+    const chronological = events.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    let balance = new Prisma.Decimal(0);
+    let billed = new Prisma.Decimal(0);
+    let collected = new Prisma.Decimal(0);
+    let refunded = new Prisma.Decimal(0);
+    const rows = chronological.map((event) => {
+      balance = balance.plus(event.amount);
+      if (event.kind === "sale") billed = billed.plus(event.amount);
+      if (event.kind === "payment") collected = collected.plus(event.amount.abs());
+      if (event.kind === "refund") refunded = refunded.plus(event.amount);
+      return { ...event, balance: balance.toString(), amount: event.amount.toString(), createdAt: event.createdAt.toISOString() };
+    }).reverse();
+    accountStatement = {
+      transactions: rows,
+      billed: billed.toString(),
+      collected: collected.toString(),
+      refunded: refunded.toString(),
+      balance: balance.toString(),
+    };
+  }
 
   const vehicles = vehiclesRaw.map((v) => ({
     id: v.id,
@@ -224,12 +334,14 @@ export default async function CustomerPage({ params, searchParams }: PageProps<"
         activeTab={activeTab}
         orders={orders}
         invoices={invoices}
+        accountStatement={accountStatement}
         fieldSections={fieldSections}
         fieldValues={fieldValues}
         vehicles={showVehicles ? vehicles : null}
         canAddVehicle={ctx.permissions.has("vehicles.create")}
         currencyCode={customer.organization.currencyCode}
         locale={customer.organization.locale}
+        timezone={customer.organization.timezone}
         canAssign={ctx.permissions.has("customers.assign")}
         canEdit={ctx.permissions.has("customers.edit")}
       />

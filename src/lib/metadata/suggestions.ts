@@ -3,7 +3,7 @@
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getActiveOrganizationId } from "@/lib/organization/active-org";
-import { loadTenantContext } from "@/lib/rbac/guard";
+import { getAccessibleBranchIds, loadTenantContext } from "@/lib/rbac/guard";
 import { getCountryOptions, getCurrencyOptions, getTimezoneOptions } from "@/lib/reference/locale-data";
 
 /*
@@ -80,8 +80,10 @@ export async function fetchSuggestions(request: SuggestionRequest): Promise<Sugg
   if (!ctx) return [];
 
   if (providerId === "organization.branch") {
+    if (!ctx.permissions.has("branches.view")) return [];
+    const accessibleBranchIds = await getAccessibleBranchIds(ctx);
     const branches = await db.branch.findMany({
-      where: { organizationId, archivedAt: null },
+      where: { organizationId, archivedAt: null, id: { in: accessibleBranchIds } },
       select: { id: true, name: true, city: true },
       orderBy: { name: "asc" },
     });
@@ -92,8 +94,9 @@ export async function fetchSuggestions(request: SuggestionRequest): Promise<Sugg
   }
 
   if (providerId === "organization.member") {
+    if (!ctx.permissions.has("employees.view")) return [];
     const members = await db.membership.findMany({
-      where: { organizationId, status: "ACTIVE" },
+      where: { organizationId, status: "ACTIVE", role: { organizationId } },
       include: { user: { select: { name: true, email: true, phone: true } } },
     });
     return filterAndCap(

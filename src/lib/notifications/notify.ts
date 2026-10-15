@@ -20,6 +20,14 @@ export async function notifyMembership(
 ) {
   if (params.membershipId === params.actingMembershipId) return;
 
+  const target = await tx.membership.findFirst({
+    where: { id: params.membershipId, organizationId: params.organizationId },
+    select: { id: true },
+  });
+  if (!target) {
+    throw new Error("Notification target must belong to the supplied organization");
+  }
+
   await tx.notification.create({
     data: {
       organizationId: params.organizationId,

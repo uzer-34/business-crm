@@ -57,7 +57,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
 
   const [revenueTrend, topCustomers, topProducts, expenseBreakdown] = await Promise.all([
     canSeeFinancial ? getMonthlyRevenueTrend(organization.id, months) : Promise.resolve([]),
-    canSeeSales ? getTopCustomersByRevenue(organization.id, 5, days) : Promise.resolve([]),
+    canSeeSales ? getTopCustomersByRevenue(ctx, 5, days) : Promise.resolve([]),
     canSeeSales ? getTopProductsByQuantityFulfilled(organization.id, 5, days) : Promise.resolve([]),
     canSeeFinancial ? getExpenseBreakdownByCategory(organization.id, days) : Promise.resolve([]),
   ]);

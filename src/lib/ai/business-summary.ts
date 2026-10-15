@@ -80,7 +80,7 @@ export async function generateBusinessSummaryAction(organizationId: string): Pro
 
   const [revenueTrend, topCustomers, topProducts, expenseBreakdown] = await Promise.all([
     getMonthlyRevenueTrend(ctx.organizationId),
-    getTopCustomersByRevenue(ctx.organizationId),
+    getTopCustomersByRevenue(ctx),
     getTopProductsByQuantityFulfilled(ctx.organizationId),
     getExpenseBreakdownByCategory(ctx.organizationId),
   ]);

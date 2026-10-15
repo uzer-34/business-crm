@@ -267,8 +267,10 @@ function MobileBottomNav({
             href={item.href}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "flex min-w-0 flex-1 flex-col items-center gap-0.5 px-1 py-2 text-[10px] font-medium transition-colors",
-              active ? "text-accent" : "text-foreground-muted",
+              "relative flex min-w-0 flex-1 flex-col items-center gap-0.5 px-1 py-2 text-[10px] font-medium transition-colors",
+              active
+                ? "text-accent before:absolute before:inset-x-5 before:top-0 before:h-0.5 before:rounded-full before:bg-accent"
+                : "text-foreground-muted",
             )}
           >
             <Icon className="size-5 shrink-0" aria-hidden="true" />
@@ -281,8 +283,10 @@ function MobileBottomNav({
         onClick={onMore}
         aria-expanded={moreActive}
         className={cn(
-          "flex min-w-0 flex-1 cursor-pointer flex-col items-center gap-0.5 px-1 py-2 text-[10px] font-medium transition-colors",
-          moreActive ? "text-accent" : "text-foreground-muted",
+          "relative flex min-w-0 flex-1 cursor-pointer flex-col items-center gap-0.5 px-1 py-2 text-[10px] font-medium transition-colors",
+          moreActive
+            ? "text-accent before:absolute before:inset-x-5 before:top-0 before:h-0.5 before:rounded-full before:bg-accent"
+            : "text-foreground-muted",
         )}
       >
         <MoreIcon className="size-5 shrink-0" aria-hidden="true" />

@@ -3,6 +3,7 @@
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext, requirePermission, ForbiddenError } from "@/lib/rbac/guard";
+import { loadAccessibleCustomerContext } from "./access";
 import { createTaskSchema } from "@/lib/validation/customer";
 import { logActivity } from "./activity";
 import { recordAudit } from "@/lib/audit/record";
@@ -13,11 +14,9 @@ export async function createTaskAction(customerId: string, input: unknown): Prom
   const user = await getCurrentUser();
   if (!user) return { ok: false, error: "Not signed in" };
 
-  const customer = await db.customer.findUnique({ where: { id: customerId } });
-  if (!customer) return { ok: false, error: "Customer not found" };
-
-  const ctx = await loadTenantContext(user.id, customer.organizationId);
-  if (!ctx) return { ok: false, error: "Customer not found" };
+  const loaded = await loadAccessibleCustomerContext(user.id, customerId);
+  if (!loaded) return { ok: false, error: "Customer not found" };
+  const { ctx } = loaded;
 
   try {
     requirePermission(ctx, "customers.edit");
@@ -92,6 +91,13 @@ export async function completeTaskAction(taskId: string): Promise<ActionResult> 
 
   const ctx = await loadTenantContext(user.id, task.organizationId);
   if (!ctx) return { ok: false, error: "Task not found" };
+
+  if (task.customerId) {
+    const loaded = await loadAccessibleCustomerContext(user.id, task.customerId);
+    if (!loaded || loaded.ctx.organizationId !== task.organizationId) {
+      return { ok: false, error: "Task not found" };
+    }
+  }
 
   // Completing your own assigned task is always allowed; completing one
   // assigned to someone else needs the module permission that applies

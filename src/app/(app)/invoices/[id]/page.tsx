@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext } from "@/lib/rbac/guard";
+import { getAccessibleCustomerNames } from "@/lib/customer/access";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatMoney } from "@/lib/format";
 import { InvoicePaymentForm } from "./invoice-payment-form";
@@ -27,7 +28,6 @@ export default async function InvoicePage({ params }: PageProps<"/invoices/[id]"
   const invoice = await db.invoice.findUnique({
     where: { id },
     include: {
-      customer: true,
       branch: true,
       organization: true,
       items: true,
@@ -38,6 +38,11 @@ export default async function InvoicePage({ params }: PageProps<"/invoices/[id]"
 
   const ctx = await loadTenantContext(user.id, invoice.organizationId);
   if (!ctx) notFound();
+
+  const customerNameById = await getAccessibleCustomerNames(
+    ctx,
+    invoice.customerId ? [invoice.customerId] : [],
+  );
 
   const { organization } = invoice;
   const canRecordPayment = ctx.permissions.has("payments.record") && invoice.status !== "VOID";
@@ -51,7 +56,9 @@ export default async function InvoicePage({ params }: PageProps<"/invoices/[id]"
           <div>
             <h1 className="text-xl font-semibold">{invoice.invoiceNumber}</h1>
             <p className="text-sm text-muted-foreground">
-              {invoice.customer ? invoice.customer.name : "Walk-in"} · {invoice.branch.name}
+              {invoice.customerId
+                ? customerNameById.get(invoice.customerId) ?? "Customer unavailable"
+                : "Walk-in"} · {invoice.branch.name}
             </p>
           </div>
           <div className="flex items-center gap-3">

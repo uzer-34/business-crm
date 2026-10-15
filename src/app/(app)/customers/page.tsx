@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
+import { notFound } from "next/navigation";
 import { getDefaultMembershipOrRedirect } from "@/lib/organization/actions";
-import { loadTenantContext } from "@/lib/rbac/guard";
+import { getAccessibleBranchIds, loadTenantContext } from "@/lib/rbac/guard";
 import { getTerminology } from "@/lib/industry/terminology";
 import { PageHeader } from "@/components/ui/layout";
 import { Card, CardContent } from "@/components/ui/card";
@@ -35,16 +36,18 @@ export default async function CustomersPage({ searchParams }: PageProps<"/custom
 
   const params = await searchParams;
   const query = parseCustomerListQuery(params);
+  const accessibleBranchIds = await getAccessibleBranchIds(ctx);
+  if (query.filters.branchId && !accessibleBranchIds.includes(query.filters.branchId)) notFound();
 
   const [result, fieldSections, members, branches] = await Promise.all([
-    getCustomerList(membership.organizationId, query),
+    getCustomerList(membership.organizationId, query, accessibleBranchIds),
     loadFieldLayout(membership.organizationId, "customer", { roleKey: ctx.roleKey }),
     db.membership.findMany({
       where: { organizationId: membership.organizationId, status: "ACTIVE" },
       include: { user: { select: { name: true, email: true, phone: true } } },
     }),
     db.branch.findMany({
-      where: { organizationId: membership.organizationId, archivedAt: null },
+      where: { organizationId: membership.organizationId, id: { in: accessibleBranchIds }, archivedAt: null },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     }),

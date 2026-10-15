@@ -40,3 +40,9 @@ export const receiveItemSchema = z.object({
 export const recordPaymentSchema = z.object({
   amount: z.coerce.number().positive(),
 });
+
+export const recordSupplierPaymentSchema = z.object({
+  amount: z.coerce.number().positive(),
+  method: z.enum(["CASH", "BANK_TRANSFER", "CARD", "ONLINE", "OTHER"]),
+  reference: z.string().trim().max(120).optional().or(z.literal("")),
+});

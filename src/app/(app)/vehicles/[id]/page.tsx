@@ -2,7 +2,8 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/session";
-import { loadTenantContext } from "@/lib/rbac/guard";
+import { getAccessibleBranchIds, loadTenantContext } from "@/lib/rbac/guard";
+import { loadAccessibleCustomerInOrganization } from "@/lib/customer/access";
 import { getTerminology } from "@/lib/industry/terminology";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatMoney } from "@/lib/format";
@@ -24,16 +25,25 @@ export default async function VehiclePage({ params }: PageProps<"/vehicles/[id]"
   const user = await getCurrentUser();
   if (!user) notFound();
 
-  const vehicle = await db.vehicle.findUnique({ where: { id }, include: { customer: true, organization: true } });
+  const vehicle = await db.vehicle.findUnique({ where: { id }, include: { organization: true } });
   if (!vehicle) notFound();
 
   const ctx = await loadTenantContext(user.id, vehicle.organizationId);
   if (!ctx || !ctx.permissions.has("vehicles.view")) notFound();
 
+  const [accessibleCustomer, accessibleBranchIds] = await Promise.all([
+    loadAccessibleCustomerInOrganization(user.id, vehicle.customerId, ctx.organizationId),
+    getAccessibleBranchIds(ctx),
+  ]);
+  if (!accessibleCustomer) notFound();
+
   const term = getTerminology(vehicle.organization.industryKey);
 
   const [serviceHistory, fieldSections, fieldValues] = await Promise.all([
-    db.order.findMany({ where: { vehicleId: id }, orderBy: { createdAt: "desc" } }),
+    db.order.findMany({
+      where: { organizationId: ctx.organizationId, vehicleId: id, branchId: { in: accessibleBranchIds } },
+      orderBy: { createdAt: "desc" },
+    }),
     loadFieldLayout(ctx.organizationId, "vehicle", { roleKey: ctx.roleKey }),
     loadFieldValues(ctx.organizationId, "vehicle", id),
   ]);
@@ -49,7 +59,7 @@ export default async function VehiclePage({ params }: PageProps<"/vehicles/[id]"
             </h1>
             <p className="text-sm text-muted-foreground">
               <Link href={`/customers/${vehicle.customerId}`} className="hover:underline">
-                {vehicle.customer.name}
+                {accessibleCustomer.customer.name}
               </Link>
               {vehicle.plateNumber && ` · ${vehicle.plateNumber}`}
               {vehicle.vin && ` · VIN ${vehicle.vin}`}

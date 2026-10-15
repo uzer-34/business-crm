@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext, requirePermission, assertBranchAccess, ForbiddenError } from "@/lib/rbac/guard";
-import { createPurchaseOrderSchema, receiveItemSchema, recordPaymentSchema } from "@/lib/validation/purchasing";
+import { createPurchaseOrderSchema, receiveItemSchema, recordSupplierPaymentSchema } from "@/lib/validation/purchasing";
 import { applyStockMovement } from "@/lib/inventory/stock";
 import type { ActionResult } from "@/lib/auth/actions";
 
@@ -251,33 +251,51 @@ export async function recordPurchaseOrderPaymentAction(
 
   try {
     requirePermission(ctx, "purchases.receive");
+    await assertBranchAccess(ctx, purchaseOrder.branchId);
   } catch (error) {
     if (error instanceof ForbiddenError) return { ok: false, error: error.message };
     throw error;
   }
 
-  const parsed = recordPaymentSchema.safeParse(input);
+  const parsed = recordSupplierPaymentSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
 
-  const outstanding = new Prisma.Decimal(purchaseOrder.total).minus(purchaseOrder.amountPaid);
   const amount = new Prisma.Decimal(parsed.data.amount);
-  if (amount.greaterThan(outstanding)) {
-    return { ok: false, error: `Amount exceeds the outstanding balance of ${outstanding.toString()}` };
-  }
+  return db.$transaction(async (tx) => {
+    const current = await tx.purchaseOrder.findUnique({ where: { id: purchaseOrderId } });
+    if (!current) return { ok: false, error: "Purchase order not found" };
+    if (current.status === "CANCELLED") return { ok: false, error: "This purchase order was cancelled" };
 
-  const newAmountPaid = new Prisma.Decimal(purchaseOrder.amountPaid).plus(amount);
-  const paymentStatus = newAmountPaid.greaterThanOrEqualTo(purchaseOrder.total)
-    ? "PAID"
-    : newAmountPaid.greaterThan(0)
-      ? "PARTIALLY_PAID"
-      : "UNPAID";
+    const outstanding = new Prisma.Decimal(current.total).minus(current.amountPaid);
+    if (amount.greaterThan(outstanding)) {
+      return { ok: false, error: `Amount exceeds the outstanding balance of ${outstanding.toString()}` };
+    }
 
-  await db.$transaction(async (tx) => {
-    await tx.purchaseOrder.update({
-      where: { id: purchaseOrderId },
+    const newAmountPaid = new Prisma.Decimal(current.amountPaid).plus(amount);
+    const paymentStatus = newAmountPaid.greaterThanOrEqualTo(current.total)
+      ? "PAID"
+      : "PARTIALLY_PAID";
+
+    // Compare-and-update prevents two simultaneous receipts from both using
+    // the same cached balance and overpaying the purchase order.
+    const updated = await tx.purchaseOrder.updateMany({
+      where: { id: purchaseOrderId, amountPaid: current.amountPaid },
       data: { amountPaid: newAmountPaid, paymentStatus },
+    });
+    if (updated.count !== 1) {
+      return { ok: false, error: "The balance changed while recording this payment. Refresh and try again." };
+    }
+
+    await tx.supplierPayment.create({
+      data: {
+        purchaseOrderId,
+        amount,
+        method: parsed.data.method,
+        reference: parsed.data.reference || null,
+        recordedByUserId: user.id,
+      },
     });
 
     await tx.auditLog.create({
@@ -287,10 +305,10 @@ export async function recordPurchaseOrderPaymentAction(
         action: "purchase_order.payment_recorded",
         targetType: "PurchaseOrder",
         targetId: purchaseOrderId,
-        metadata: { amount: amount.toString(), paymentStatus },
+        metadata: { amount: amount.toString(), method: parsed.data.method, paymentStatus },
       },
     });
-  });
 
-  return { ok: true, data: undefined };
+    return { ok: true, data: undefined };
+  });
 }

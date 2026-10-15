@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { getDefaultMembershipOrRedirect } from "@/lib/organization/actions";
+import { loadTenantContext } from "@/lib/rbac/guard";
+import { getAccessibleCustomerNames } from "@/lib/customer/access";
 import { Card, CardContent } from "@/components/ui/card";
 import { RevealOnScroll } from "@/components/motion/reveal-on-scroll";
 import { HoverLift } from "@/components/motion/hover-lift";
@@ -13,15 +15,20 @@ const PAYMENT_LABEL: Record<string, string> = {
 };
 
 export default async function InvoicesPage() {
-  const { membership } = await getDefaultMembershipOrRedirect();
+  const { user, membership } = await getDefaultMembershipOrRedirect();
   const { organization } = membership;
+  const ctx = await loadTenantContext(user.id, organization.id);
+  if (!ctx) return null;
 
   const invoices = await db.invoice.findMany({
     where: { organizationId: organization.id },
-    include: { customer: true },
     orderBy: { createdAt: "desc" },
     take: 100,
   });
+  const customerNameById = await getAccessibleCustomerNames(
+    ctx,
+    invoices.map((invoice) => invoice.customerId).filter((id): id is string => Boolean(id)),
+  );
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-6">
@@ -46,7 +53,9 @@ export default async function InvoicesPage() {
                     <div>
                       <p className="font-medium">
                         {invoice.invoiceNumber}
-                        {invoice.customer && <span className="text-muted-foreground"> · {invoice.customer.name}</span>}
+                        {invoice.customerId && customerNameById.has(invoice.customerId) && (
+                          <span className="text-muted-foreground"> · {customerNameById.get(invoice.customerId)}</span>
+                        )}
                       </p>
                       <p className="text-sm text-muted-foreground">
                         {invoice.status === "VOID" ? "Void" : PAYMENT_LABEL[invoice.paymentStatus]}

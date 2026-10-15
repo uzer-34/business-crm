@@ -1,6 +1,6 @@
 import "server-only";
 import { db } from "@/lib/db";
-import type { PermissionKey } from "./permissions";
+import { isPermissionKey, type PermissionKey } from "./permissions";
 
 export class ForbiddenError extends Error {
   constructor(message = "Forbidden") {
@@ -36,7 +36,11 @@ export async function loadTenantContext(
     include: { role: { include: { permissions: { include: { permission: true } } } } },
   });
 
-  if (!membership || membership.status !== "ACTIVE") {
+  if (
+    !membership ||
+    membership.status !== "ACTIVE" ||
+    membership.role.organizationId !== membership.organizationId
+  ) {
     return null;
   }
 
@@ -47,14 +51,18 @@ export async function loadTenantContext(
     roleId: membership.roleId,
     roleKey: membership.role.key,
     allBranches: membership.allBranches,
+    // Fail closed on keys introduced outside the tenant catalog. In
+    // particular, platform capabilities must never flow through tenant roles.
     permissions: new Set(
-      membership.role.permissions.map((rp) => rp.permission.key as PermissionKey),
+      membership.role.permissions
+        .map((rp) => rp.permission.key)
+        .filter(isPermissionKey),
     ),
   };
 }
 
 export function requirePermission(ctx: TenantContext, permission: PermissionKey): void {
-  if (!ctx.permissions.has(permission)) {
+  if (!isPermissionKey(permission) || !ctx.permissions.has(permission)) {
     throw new ForbiddenError(`Missing permission: ${permission}`);
   }
 }
@@ -65,6 +73,15 @@ export function requirePermission(ctx: TenantContext, permission: PermissionKey)
  * branch-scoped data.
  */
 export async function assertBranchAccess(ctx: TenantContext, branchId: string): Promise<void> {
+  const branch = await db.branch.findFirst({
+    where: { id: branchId, organizationId: ctx.organizationId },
+    select: { id: true },
+  });
+
+  if (!branch) {
+    throw new ForbiddenError("No access to this branch");
+  }
+
   if (ctx.allBranches) return;
 
   const link = await db.membershipBranch.findUnique({
@@ -74,4 +91,19 @@ export async function assertBranchAccess(ctx: TenantContext, branchId: string): 
   if (!link) {
     throw new ForbiddenError("No access to this branch");
   }
+}
+
+/** Returns only branches the active tenant membership may access. */
+export async function getAccessibleBranchIds(ctx: TenantContext): Promise<string[]> {
+  const branches = await db.branch.findMany({
+    where: {
+      organizationId: ctx.organizationId,
+      ...(ctx.allBranches
+        ? {}
+        : { membershipBranches: { some: { membershipId: ctx.membershipId } } }),
+    },
+    select: { id: true },
+  });
+
+  return branches.map((branch) => branch.id);
 }

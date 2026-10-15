@@ -49,16 +49,47 @@ async function requireConfigAccess(
   return { ctx, userId: user.id };
 }
 
-/** Confirms every id belongs to this organization before it is linked. */
+function categoryKindForEntity(entityKey: string): "PRODUCT" | "SERVICE" | null {
+  if (entityKey === "product") return "PRODUCT";
+  if (entityKey === "service") return "SERVICE";
+  return null;
+}
+
+/** Confirms category links belong to this organization and record type. */
 async function assertCategoriesOwned(
   client: Prisma.TransactionClient,
   organizationId: string,
+  entityKey: string,
   categoryIds: string[],
 ): Promise<void> {
   if (categoryIds.length === 0) return;
-  const owned = await client.category.count({ where: { id: { in: categoryIds }, organizationId } });
+
+  const kind = categoryKindForEntity(entityKey);
+  if (!kind) {
+    throw new ForbiddenError("Categories cannot be linked to this record type");
+  }
+
+  const owned = await client.category.count({ where: { id: { in: categoryIds }, organizationId, kind } });
   if (owned !== categoryIds.length) {
-    throw new ForbiddenError("One of those categories does not belong to this business");
+    throw new ForbiddenError("One of those categories does not belong to this record type and business");
+  }
+}
+
+/** Confirms the optional section belongs to this organization and entity type. */
+async function assertSectionCompatible(
+  client: Prisma.TransactionClient,
+  organizationId: string,
+  entityKey: string,
+  sectionId: string | undefined,
+): Promise<void> {
+  if (!sectionId) return;
+
+  const section = await client.fieldSection.findFirst({
+    where: { id: sectionId, organizationId, entityKey },
+    select: { id: true },
+  });
+  if (!section) {
+    throw new ForbiddenError("That section does not belong to this record type and business");
   }
 }
 
@@ -81,8 +112,9 @@ export async function createFieldAction(
 
   try {
     const field = await db.$transaction(async (tx) => {
+      await assertSectionCompatible(tx, ctx.organizationId, data.entityKey, data.sectionId);
+      await assertCategoriesOwned(tx, ctx.organizationId, data.entityKey, data.categoryIds);
       await ensureDefaultSections(tx, ctx.organizationId, data.entityKey);
-      await assertCategoriesOwned(tx, ctx.organizationId, data.categoryIds);
 
       // New fields land at the end of the entity's existing order.
       const last = await tx.fieldDefinition.findFirst({
@@ -154,7 +186,8 @@ export async function updateFieldAction(fieldId: string, input: unknown): Promis
 
   try {
     await db.$transaction(async (tx) => {
-      await assertCategoriesOwned(tx, ctx.organizationId, data.categoryIds);
+      await assertSectionCompatible(tx, ctx.organizationId, existing.entityKey, data.sectionId);
+      await assertCategoriesOwned(tx, ctx.organizationId, existing.entityKey, data.categoryIds);
 
       await tx.fieldDefinition.update({
         where: { id: fieldId },
@@ -343,8 +376,14 @@ export async function applyRecommendationsAction(
 
   const entity = getEntityDefinition(entityKey);
   if (!entity) return { ok: false, error: "Unknown record type." };
+  const categoryKind = categoryKindForEntity(entityKey);
+  if (!entity.supportsCategories || !categoryKind) {
+    return { ok: false, error: "This record type does not support category recommendations." };
+  }
 
-  const category = await db.category.findFirst({ where: { id: categoryId, organizationId: ctx.organizationId } });
+  const category = await db.category.findFirst({
+    where: { id: categoryId, organizationId: ctx.organizationId, kind: categoryKind },
+  });
   if (!category) return { ok: false, error: "Category not found." };
 
   const result = await db.$transaction(async (tx) => {

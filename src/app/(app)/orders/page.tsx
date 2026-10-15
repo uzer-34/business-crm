@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { getDefaultMembershipOrRedirect } from "@/lib/organization/actions";
+import { loadTenantContext } from "@/lib/rbac/guard";
+import { getAccessibleCustomerNames } from "@/lib/customer/access";
 import { getTerminology } from "@/lib/industry/terminology";
 import { Card, CardContent } from "@/components/ui/card";
 import { RevealOnScroll } from "@/components/motion/reveal-on-scroll";
@@ -21,16 +23,22 @@ const PAYMENT_LABEL: Record<string, string> = {
 };
 
 export default async function OrdersPage() {
-  const { membership } = await getDefaultMembershipOrRedirect();
+  const { user, membership } = await getDefaultMembershipOrRedirect();
   const { organization } = membership;
+  const ctx = await loadTenantContext(user.id, organization.id);
+  if (!ctx) return null;
   const term = getTerminology(organization.industryKey);
 
   const orders = await db.order.findMany({
     where: { organizationId: organization.id },
-    include: { customer: true, branch: true },
+    include: { branch: true },
     orderBy: { createdAt: "desc" },
     take: 100,
   });
+  const customerNameById = await getAccessibleCustomerNames(
+    ctx,
+    orders.map((order) => order.customerId).filter((id): id is string => Boolean(id)),
+  );
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-6">
@@ -63,7 +71,9 @@ export default async function OrdersPage() {
                     <div>
                       <p className="font-medium">
                         {order.orderNumber}
-                        {order.customer && <span className="text-muted-foreground"> · {order.customer.name}</span>}
+                        {order.customerId && customerNameById.has(order.customerId) && (
+                          <span className="text-muted-foreground"> · {customerNameById.get(order.customerId)}</span>
+                        )}
                       </p>
                       <p className="text-sm text-muted-foreground">
                         {order.branch.name} · {STATUS_LABEL[order.status]} · {PAYMENT_LABEL[order.paymentStatus]}

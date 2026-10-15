@@ -27,6 +27,9 @@ export function InviteEmployeeForm({
   const [branchIds, setBranchIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [invitationLink, setInvitationLink] = useState<string | null>(null);
+  const [invitationExpiresAt, setInvitationExpiresAt] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   if (!open) {
@@ -53,8 +56,13 @@ export function InviteEmployeeForm({
               return;
             }
             setSuccess(
-              `Invited. They'll join automatically the next time they sign in at /login with this ${channel === "EMAIL" ? "email" : "phone number"}.`,
+              `Invitation created. The recipient must sign in with the invited ${channel === "EMAIL" ? "email address" : "phone number"} and accept it before joining.`,
             );
+            setInvitationLink(
+              `${window.location.origin}/accept-invitation?token=${encodeURIComponent(result.data.invitationToken)}`,
+            );
+            setInvitationExpiresAt(result.data.expiresAt);
+            setCopied(false);
             setTarget("");
             router.refresh();
           });
@@ -128,6 +136,27 @@ export function InviteEmployeeForm({
 
         {error && <p className="text-sm text-danger">{error}</p>}
         {success && <p className="text-sm text-success">{success}</p>}
+        {invitationLink && (
+          <div className="flex flex-col gap-2 rounded-md border border-border bg-muted/40 p-3">
+            <Label htmlFor="invitation-link">Secure invitation link</Label>
+            <Input id="invitation-link" readOnly value={invitationLink} className="text-xs" />
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs text-muted-foreground">
+                Expires {invitationExpiresAt ? new Date(invitationExpiresAt).toLocaleString() : "soon"}.
+              </p>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={async () => {
+                  await navigator.clipboard.writeText(invitationLink);
+                  setCopied(true);
+                }}
+              >
+                {copied ? "Copied" : "Copy link"}
+              </Button>
+            </div>
+          </div>
+        )}
 
         <div className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="secondary" onClick={() => setOpen(false)}>

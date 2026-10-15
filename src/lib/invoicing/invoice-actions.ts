@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { getCurrentUser } from "@/lib/auth/session";
 import { loadTenantContext, requirePermission, assertBranchAccess, ForbiddenError } from "@/lib/rbac/guard";
+import { loadAccessibleCustomerInOrganization } from "@/lib/customer/access";
 import { recordInvoicePaymentSchema } from "@/lib/validation/invoicing";
 import type { ActionResult } from "@/lib/auth/actions";
 
@@ -28,11 +29,30 @@ export async function createInvoiceFromOrderAction(orderId: string): Promise<Act
     throw error;
   }
 
+  if (order.customerId && !(await loadAccessibleCustomerInOrganization(user.id, order.customerId, ctx.organizationId))) {
+    return { ok: false, error: "Customer not found" };
+  }
+
   if (order.status === "CANCELLED") {
     return { ok: false, error: "Cannot invoice a cancelled order" };
   }
 
   const invoice = await db.$transaction(async (tx) => {
+    // Lock the order before checking its invoice state or copying pre-invoice
+    // receipts. Order-level payment actions take the same row lock, so a
+    // receipt cannot slip in while invoice creation is underway.
+    await tx.order.updateMany({ where: { id: order.id }, data: { updatedAt: new Date() } });
+    const existing = await tx.invoice.findFirst({ where: { orderId: order.id }, select: { id: true } });
+    if (existing) return null;
+
+    const orderPayments = await tx.orderPayment.findMany({ where: { orderId: order.id }, orderBy: { createdAt: "asc" } });
+    const amountPaid = orderPayments.reduce((total, payment) => total.plus(payment.amount), new Prisma.Decimal(0));
+    const paymentStatus = amountPaid.greaterThanOrEqualTo(order.total)
+      ? "PAID"
+      : amountPaid.greaterThan(0)
+        ? "PARTIALLY_PAID"
+        : "UNPAID";
+
     const org = await tx.organization.update({
       where: { id: ctx.organizationId },
       data: { invoiceSequence: { increment: 1 } },
@@ -46,6 +66,8 @@ export async function createInvoiceFromOrderAction(orderId: string): Promise<Act
         customerId: order.customerId,
         branchId: order.branchId,
         invoiceNumber,
+        amountPaid,
+        paymentStatus,
         subtotal: order.subtotal,
         discountTotal: order.discountTotal,
         taxTotal: order.taxTotal,
@@ -65,6 +87,20 @@ export async function createInvoiceFromOrderAction(orderId: string): Promise<Act
       },
     });
 
+    if (orderPayments.length > 0) {
+      await tx.payment.createMany({
+        data: orderPayments.map((payment) => ({
+          organizationId: ctx.organizationId,
+          invoiceId: created.id,
+          amount: payment.amount,
+          method: payment.method,
+          reference: payment.reference,
+          recordedByUserId: payment.recordedByUserId,
+          createdAt: payment.createdAt,
+        })),
+      });
+    }
+
     await tx.auditLog.create({
       data: {
         organizationId: ctx.organizationId,
@@ -78,6 +114,8 @@ export async function createInvoiceFromOrderAction(orderId: string): Promise<Act
 
     return created;
   });
+
+  if (!invoice) return { ok: false, error: "An invoice already exists for this order" };
 
   return { ok: true, data: { invoiceId: invoice.id } };
 }
@@ -121,7 +159,20 @@ export async function recordInvoicePaymentAction(invoiceId: string, input: unkno
       ? "PARTIALLY_PAID"
       : "UNPAID";
 
-  await db.$transaction(async (tx) => {
+  const recorded = await db.$transaction(async (tx) => {
+    // Compare-and-update the cached balance in the same transaction as the
+    // payment row. Two requests that read the same balance cannot both apply.
+    const updated = await tx.invoice.updateMany({
+      where: {
+        id: invoiceId,
+        organizationId: ctx.organizationId,
+        amountPaid: invoice.amountPaid,
+        status: { not: "VOID" },
+      },
+      data: { amountPaid: newAmountPaid, paymentStatus },
+    });
+    if (updated.count !== 1) return false;
+
     await tx.payment.create({
       data: {
         organizationId: ctx.organizationId,
@@ -131,11 +182,6 @@ export async function recordInvoicePaymentAction(invoiceId: string, input: unkno
         reference: parsed.data.reference,
         recordedByUserId: user.id,
       },
-    });
-
-    await tx.invoice.update({
-      where: { id: invoiceId },
-      data: { amountPaid: newAmountPaid, paymentStatus },
     });
 
     await tx.auditLog.create({
@@ -148,7 +194,12 @@ export async function recordInvoicePaymentAction(invoiceId: string, input: unkno
         metadata: { amount: amount.toString(), method: parsed.data.method, paymentStatus },
       },
     });
+    return true;
   });
+
+  if (!recorded) {
+    return { ok: false, error: "The invoice balance changed. Refresh and try again." };
+  }
 
   return { ok: true, data: undefined };
 }
@@ -198,7 +249,20 @@ export async function refundInvoicePaymentAction(invoiceId: string, input: unkno
       ? "PARTIALLY_PAID"
       : "UNPAID";
 
-  await db.$transaction(async (tx) => {
+  const refunded = await db.$transaction(async (tx) => {
+    // Refunds use the same compare-and-update guard as receipts so concurrent
+    // requests cannot refund the same cached balance more than once.
+    const updated = await tx.invoice.updateMany({
+      where: {
+        id: invoiceId,
+        organizationId: ctx.organizationId,
+        amountPaid: invoice.amountPaid,
+        status: { not: "VOID" },
+      },
+      data: { amountPaid: newAmountPaid, paymentStatus },
+    });
+    if (updated.count !== 1) return false;
+
     await tx.payment.create({
       data: {
         organizationId: ctx.organizationId,
@@ -208,11 +272,6 @@ export async function refundInvoicePaymentAction(invoiceId: string, input: unkno
         reference: parsed.data.reference,
         recordedByUserId: user.id,
       },
-    });
-
-    await tx.invoice.update({
-      where: { id: invoiceId },
-      data: { amountPaid: newAmountPaid, paymentStatus },
     });
 
     await tx.auditLog.create({
@@ -225,7 +284,12 @@ export async function refundInvoicePaymentAction(invoiceId: string, input: unkno
         metadata: { amount: amount.toString(), method: parsed.data.method, paymentStatus },
       },
     });
+    return true;
   });
+
+  if (!refunded) {
+    return { ok: false, error: "The invoice balance changed. Refresh and try again." };
+  }
 
   return { ok: true, data: undefined };
 }
@@ -254,11 +318,19 @@ export async function voidInvoiceAction(invoiceId: string): Promise<ActionResult
     return { ok: false, error: "Cannot void an invoice with recorded payments" };
   }
 
-  await db.$transaction(async (tx) => {
-    await tx.invoice.update({
-      where: { id: invoiceId },
+  const voided = await db.$transaction(async (tx) => {
+    // A payment arriving after the preflight read must prevent voiding. The
+    // status and balance predicate also serializes against concurrent voids.
+    const updated = await tx.invoice.updateMany({
+      where: {
+        id: invoiceId,
+        organizationId: ctx.organizationId,
+        status: invoice.status,
+        amountPaid: invoice.amountPaid,
+      },
       data: { status: "VOID", voidedAt: new Date() },
     });
+    if (updated.count !== 1) return false;
 
     await tx.auditLog.create({
       data: {
@@ -269,7 +341,12 @@ export async function voidInvoiceAction(invoiceId: string): Promise<ActionResult
         targetId: invoiceId,
       },
     });
+    return true;
   });
+
+  if (!voided) {
+    return { ok: false, error: "The invoice changed. Refresh and try again." };
+  }
 
   return { ok: true, data: undefined };
 }

@@ -7,12 +7,12 @@ type Variant = "primary" | "secondary" | "outline" | "ghost" | "subtle" | "dange
 type Size = "sm" | "md" | "lg" | "icon" | "icon-sm";
 
 const variantClasses: Record<Variant, string> = {
-  primary: "bg-accent text-accent-foreground hover:brightness-110 active:brightness-95",
+  primary: "rounded-full bg-accent text-accent-foreground hover:brightness-110 active:brightness-95",
   secondary: "bg-primary text-primary-foreground hover:brightness-110 active:brightness-95",
   outline: "border border-border-strong bg-surface text-foreground hover:bg-hover",
   ghost: "text-foreground-muted hover:bg-hover hover:text-foreground",
   subtle: "bg-accent-subtle text-accent-subtle-foreground hover:brightness-95",
-  danger: "bg-danger text-accent-foreground hover:brightness-110 active:brightness-95",
+  danger: "rounded-full bg-danger text-accent-foreground hover:brightness-110 active:brightness-95",
 };
 
 // Every size keeps a >=32px hit area; "sm" is only used inside rows that
